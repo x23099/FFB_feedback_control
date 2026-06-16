@@ -1,0 +1,22 @@
+# ROS 2のビルド生成物
+build/
+install/
+log/
+
+# Pythonの一時ファイル
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Pythonパッケージ生成物
+*.egg-info/
+.pytest_cache/
+
+# エディタの設定
+.vscode/
+.idea/
+
+# 一時ファイル
+*~
+*.swp
