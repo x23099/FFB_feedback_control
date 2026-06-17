@@ -14,6 +14,7 @@ from geometry_msgs.msg import Twist
 from std_msgs.msg import Float32, Int32
 
 from evdev import InputDevice, ecodes
+from std_msgs.msg import Bool
 
 
 class HandleNode(Node):
@@ -27,6 +28,12 @@ class HandleNode(Node):
         self.steering_deg_pub = self.create_publisher(Float32, '/handle/steering_angle_deg', 10)
         self.steering_norm_pub = self.create_publisher(Float32, '/handle/steering_norm', 10)
 
+        # 人間が手動操作中かFFB側へ通知する。
+        self.manual_active_pub = self.create_publisher(Bool, '/handle/manual_active', 10)
+       
+        # 現在、人間が手動介入中か。
+        self.manual_active = False
+        
         # 現在のギア情報.
         self.gear_pub = self.create_publisher(Int32, '/handle/gear', 10)
 
@@ -333,10 +340,19 @@ class HandleNode(Node):
         gear_msg.data = int(self.gear)
         self.gear_pub.publish(gear_msg)
 
-        # アクセルかブレーキがあるときだけ手動操作として/cmd_vel_joyを出す.
-        manual_active = self.throttle_norm > self.throttle_threshold or self.brake_active
+        # アクセルまたはブレーキ操作中なら手動介入中とする。
+        self.manual_active = (
+            self.throttle_norm > self.throttle_threshold
+            or self.brake_active
+        )
 
-        if not manual_active:
+        # 手動介入状態をFFB側へ20Hzで通知する。
+        manual_msg = Bool()
+        manual_msg.data = self.manual_active
+        self.manual_active_pub.publish(manual_msg)
+
+        # 手動操作中でなければ/cmd_vel_joyは送信しない。
+        if not self.manual_active:
             return
 
         twist = Twist()
