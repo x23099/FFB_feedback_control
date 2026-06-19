@@ -1,4 +1,6 @@
 # config/twist_mux.yaml
+
+# kobuki用
 twist_mux_node:
   ros__parameters:
     topics:
@@ -10,4 +12,4 @@ twist_mux_node:
         topic:   "cmd_vel_auto"
         timeout: 0.5
         priority: 10   # 👈 優先度「低」：自動走行
-        
+ 

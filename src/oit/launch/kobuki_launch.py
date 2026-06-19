@@ -24,6 +24,7 @@ def generate_launch_description():
             remappings=[
                 ('cmd_vel_out', 'cmd_vel')
             ],
+
         ),
         # 2. 正方形自動走行ノードの起動
         # Node(
@@ -38,6 +39,14 @@ def generate_launch_description():
             package='oit',
             executable='handle',
             name='HandleNode',
+            output='screen',
+        ),
+        
+        
+        Node(
+            package='oit',
+            executable='ffb_follow',
+            name='FfbFollowNode',
             output='screen',
         ),
         

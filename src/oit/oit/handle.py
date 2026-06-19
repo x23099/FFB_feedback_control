@@ -37,6 +37,75 @@ class HandleNode(Node):
         # 現在のギア情報.
         self.gear_pub = self.create_publisher(Int32, '/handle/gear', 10)
 
+        # G923のLED制御用hidraw.
+        self.led_hidraw_path = '/dev/hidraw4'
+
+        # LEDの現在状態.
+        self.led_current_mask = None
+        self.led_blink_state = False
+        self.led_last_blink_time = time.time()
+
+        # LED点滅周期.
+        self.led_blink_interval = 0.2
+
+        # シフトライト判定閾値.
+        self.led_low_threshold = 0.15
+        self.led_middle_threshold = 0.45
+        self.led_high_threshold = 0.70
+        self.led_shift_threshold = 0.90
+        
+        # 走行モード.
+        self.drive_mode = 'MT'
+
+        # MTモードの状態.
+        self.mt_gear = 0
+
+        # ATモードの状態.
+        self.at_selector = 'N'
+        self.at_gear = 1
+        self.at_min_gear = 1
+        self.at_max_gear = 6
+
+        # 各段の速度倍率.
+        self.forward_gear_gains = {
+            1: 0.5,
+            2: 1.0,
+            3: 1.5,
+            4: 2.0,
+            5: 2.5,
+            6: 3.0,
+        }
+
+        # Hパターンのイベントコード.
+        self.mt_gear_codes = {
+            300: 1,
+            301: 2,
+            302: 3,
+            303: 4,
+            704: 5,
+            705: 6,
+            706: -1,
+        }
+
+        # ATモードのセレクター位置.
+        self.at_selector_codes = {
+            300: 'P',
+            301: 'D',
+            705: 'R',
+        }
+
+        # モード切り替えボタン.
+        self.mode_switch_code = 712
+
+        # パドルのイベントコード.
+        # evtestで確認した値へ変更する.
+        self.paddle_up_code = 292
+        self.paddle_down_code = 293
+
+        # 起動時はニュートラルにする.
+        self.gear = 0
+        self.linear_gain = 0.0
+        
         # ===== 操縦パラメータ =====
 
         # Kobukiの最大速度
@@ -66,6 +135,18 @@ class HandleNode(Node):
 
         # ブレーキ判定
         self.brake_threshold_raw = 240
+        
+        # 小さな直進指令を0として扱う閾値.
+        self.linear_command_deadzone = 0.01
+
+        # 小さな旋回指令を0として扱う閾値.
+        self.angular_command_deadzone = 0.03
+
+        # 手動操作終了時にゼロ指令を送る回数.
+        self.stop_publish_cycles = 3
+
+        # 残りのゼロ指令送信回数.
+        self.stop_publish_remaining = 0
 
         # ===== G923を開く =====
 
@@ -188,7 +269,7 @@ class HandleNode(Node):
                     if event.type == ecodes.EV_ABS:
                         self.handle_abs_event(event)
 
-                    elif event.type == ecodes.EV_KEY and event.value == 1:
+                    elif event.type == ecodes.EV_KEY:
                         self.handle_key_event(event)
 
             except BlockingIOError:
@@ -277,52 +358,312 @@ class HandleNode(Node):
 
     def handle_key_event(self, event):
         """
-        Hシフト入力の処理.
-        パドルシフトは使わない.
-        クラッチを踏んでいる間だけギア変更を受け付ける.
+        MT, AT, パドルシフトの入力を処理する.
         """
+        code = event.code
+        pressed = event.value == 1
+        released = event.value == 0
 
-        # クラッチを踏んでいないなら、Hシフトは無視する.
-        if not self.clutch_active:
+        # 712を押したときにMTとATを切り替える.
+        if code == self.mode_switch_code and pressed:
+            self.toggle_drive_mode()
             return
 
-        # Hパターンシフト.
-        if event.code == 300:
-            self.gear = 1
-            self.linear_gain = 0.5
+        # MTモードのシフト入力を処理する.
+        if self.drive_mode == 'MT':
+            self.handle_mt_shift(
+                code,
+                pressed,
+                released
+            )
+            return
 
-        elif event.code == 301:
-            self.gear = 2
-            self.linear_gain = 1.0
+        # ATモードのセレクターとパドル入力を処理する.
+        if self.drive_mode == 'AT':
+            self.handle_at_shift(
+                code,
+                pressed,
+                released
+            )
 
-        elif event.code == 302:
-            self.gear = 3
-            self.linear_gain = 1.5
 
-        elif event.code == 303:
-            self.gear = 4
-            self.linear_gain = 2.0
+    def toggle_drive_mode(self):
+        """
+        MTモードとATモードを切り替える.
+        """
+        if self.drive_mode == 'MT':
+            self.drive_mode = 'AT'
+            self.at_selector = 'N'
+            self.at_gear = 1
+        else:
+            self.drive_mode = 'MT'
+            self.mt_gear = 0
 
-        elif event.code == 704:
-            self.gear = 5
-            self.linear_gain = 2.5
+        # モード切り替え時はニュートラルにする.
+        self.gear = 0
+        self.linear_gain = 0.0
 
-        elif event.code == 705:
+        # 残っている走行指令を停止させる.
+        self.stop_publish_remaining = max(
+            self.stop_publish_remaining,
+            self.stop_publish_cycles
+        )
+
+        self.get_logger().info(
+            f'Drive mode changed: {self.drive_mode}'
+        )
+
+    
+    def send_led_mask(self, mask):
+        """
+        G923のLEDへ点灯パターンを送る.
+        """
+        if mask == self.led_current_mask:
+            return
+
+        report = bytes([
+            0xf8,
+            0x12,
+            mask & 0x1f,
+            0x00,
+            0x00,
+            0x00,
+            0x01,
+        ])
+
+        try:
+            with open(self.led_hidraw_path, 'wb', buffering=0) as device:
+                device.write(report)
+
+            self.led_current_mask = mask
+
+        except OSError as error:
+            self.get_logger().warn(
+                f'LED write failed: {error}'
+            )
+
+
+    def set_shift_leds(self, count):
+        """
+        指定した個数だけLEDを点灯する.
+        """
+        count = max(0, min(5, count))
+
+        if count == 0:
+            self.send_led_mask(0x00)
+            return
+
+        mask = (1 << count) - 1
+        self.send_led_mask(mask)
+
+
+    def blink_shift_leds(self, count):
+        """
+        指定した個数のLEDを点滅させる.
+        """
+        now = time.time()
+
+        if now - self.led_last_blink_time < self.led_blink_interval:
+            return
+
+        self.led_last_blink_time = now
+        self.led_blink_state = not self.led_blink_state
+
+        if self.led_blink_state:
+            self.set_shift_leds(count)
+        else:
+            self.set_shift_leds(0)
+
+
+    def update_shift_leds(self):
+        """
+        走行状態に応じてG923のシフトLEDを更新する.
+        """
+        # ATのP,Nでは消灯する.
+        if self.drive_mode == 'AT' and self.at_selector in ['P', 'N']:
+            self.set_shift_leds(0)
+            return
+
+        # MTのニュートラルでは消灯する.
+        if self.drive_mode == 'MT' and self.gear == 0:
+            self.set_shift_leds(0)
+            return
+
+        # Rギアでは5個を点滅させる.
+        if self.gear == -1:
+            self.blink_shift_leds(5)
+            return
+
+        # 前進ギア以外では消灯する.
+        if self.gear <= 0:
+            self.set_shift_leds(0)
+            return
+
+        # アクセル開度を疑似RPMとして使う.
+        rpm_ratio = self.throttle_norm
+
+        if rpm_ratio < self.led_low_threshold:
+            self.set_shift_leds(0)
+
+        elif rpm_ratio < self.led_middle_threshold:
+            self.set_shift_leds(1)
+
+        elif rpm_ratio < self.led_high_threshold:
+            self.set_shift_leds(3)
+
+        elif rpm_ratio < self.led_shift_threshold:
+            self.set_shift_leds(5)
+
+        else:
+            self.blink_shift_leds(5)
+    
+    def handle_mt_shift(self, code, pressed, released):
+        """
+        MTモードのHパターンシフトを処理する.
+        """
+        if code not in self.mt_gear_codes:
+            return
+
+        selected_gear = self.mt_gear_codes[code]
+
+        # ギア位置から抜けたらニュートラルにする.
+        if released and self.mt_gear == selected_gear:
+            self.mt_gear = 0
+            self.gear = 0
+            self.linear_gain = 0.0
+
+            self.get_logger().info('MT gear: N')
+            return
+
+        if not pressed:
+            return
+
+        # MTではクラッチを踏んでいるときだけ変速する.
+        if not self.clutch_active:
+            self.get_logger().warn(
+                'MT shift rejected: clutch is not pressed.'
+            )
+            return
+
+        self.mt_gear = selected_gear
+        self.gear = selected_gear
+
+        if selected_gear == -1:
+            self.linear_gain = -0.5
+        else:
+            self.linear_gain = self.forward_gear_gains[
+                selected_gear
+            ]
+
+        self.get_logger().info(
+            f'MT gear: {self.gear}, '
+            f'linear_gain={self.linear_gain:.1f}'
+        )
+
+
+    def handle_at_shift(self, code, pressed, released):
+        """
+        ATモードのセレクターとパドルシフトを処理する.
+        """
+        # 右パドルで1段上げる.
+        if code == self.paddle_up_code and pressed:
+            self.shift_at_gear(1)
+            return
+
+        # 左パドルで1段下げる.
+        if code == self.paddle_down_code and pressed:
+            self.shift_at_gear(-1)
+            return
+
+        if code not in self.at_selector_codes:
+            return
+
+        selected_position = self.at_selector_codes[code]
+
+        # セレクター位置から抜けたらNにする.
+        if released and self.at_selector == selected_position:
+            self.set_at_selector('N')
+            return
+
+        if pressed:
+            self.set_at_selector(selected_position)
+
+
+    def set_at_selector(self, selector):
+        """
+        ATモードのP, R, N, Dを設定する.
+        """
+        previous_selector = self.at_selector
+        self.at_selector = selector
+
+        if selector == 'P':
+            self.gear = 0
+            self.linear_gain = 0.0
+
+        elif selector == 'R':
             self.gear = -1
             self.linear_gain = -0.5
 
-        else:
-            return
+        elif selector == 'N':
+            self.gear = 0
+            self.linear_gain = 0.0
+
+        elif selector == 'D':
+            # D以外からDへ入れたときは1速へ戻す.
+            if previous_selector != 'D':
+                self.at_gear = 1
+
+            self.gear = self.at_gear
+            self.linear_gain = self.forward_gear_gains[
+                self.at_gear
+            ]
+
+        # セレクター変更時に古い走行指令を停止させる.
+        self.stop_publish_remaining = max(
+            self.stop_publish_remaining,
+            self.stop_publish_cycles
+        )
 
         self.get_logger().info(
-            f'H-shifter accepted: gear={self.gear}, linear_gain={self.linear_gain:.1f}'
+            f'AT selector: {self.at_selector}, '
+            f'gear={self.at_gear}'
+        )
+
+
+    def shift_at_gear(self, direction):
+        """
+        ATのDレンジ中にパドルで仮想段数を変更する.
+        """
+        if self.at_selector != 'D':
+            self.get_logger().info(
+                'Paddle shift ignored: selector is not D.'
+            )
+            return
+
+        new_gear = self.at_gear + direction
+        new_gear = max(
+            self.at_min_gear,
+            min(self.at_max_gear, new_gear)
+        )
+
+        if new_gear == self.at_gear:
+            return
+
+        self.at_gear = new_gear
+        self.gear = self.at_gear
+        self.linear_gain = self.forward_gear_gains[
+            self.at_gear
+        ]
+
+        self.get_logger().info(
+            f'AT paddle shift: D{self.at_gear}, '
+            f'linear_gain={self.linear_gain:.1f}'
         )
 
     def publish_loop(self):
         """
         現在の入力状態を20Hzでpublishし続ける.
-        ハンドル角は常にpublishする.
-        /cmd_vel_joyはアクセルまたはブレーキ操作中だけpublishする.
+        手動操作終了時はゼロ指令を数回送ってからpublishを停止する.
         """
 
         # ハンドル角度[deg]をpublish.
@@ -340,45 +681,63 @@ class HandleNode(Node):
         gear_msg.data = int(self.gear)
         self.gear_pub.publish(gear_msg)
 
-        # アクセルまたはブレーキ操作中なら手動介入中とする。
-        self.manual_active = (
+        # アクセルかブレーキ操作中を手動操作として扱う.
+        manual_active = (
             self.throttle_norm > self.throttle_threshold
             or self.brake_active
         )
 
-        # 手動介入状態をFFB側へ20Hzで通知する。
+        # FFB側へ手動操作状態を通知する.
         manual_msg = Bool()
-        manual_msg.data = self.manual_active
+        manual_msg.data = manual_active
         self.manual_active_pub.publish(manual_msg)
 
-        # 手動操作中でなければ/cmd_vel_joyは送信しない。
-        if not self.manual_active:
+        # シフトライトを更新する.
+        self.update_shift_leds()
+        
+        if manual_active:
+            # 手動操作終了後に送るゼロ指令回数を準備する.
+            self.stop_publish_remaining = self.stop_publish_cycles
+
+            twist = Twist()
+
+            if self.brake_active:
+                # ブレーキ中は直進と旋回を両方停止する.
+                twist.linear.x = 0.0
+                twist.angular.z = 0.0
+
+            else:
+                # アクセル量とギア倍率から直進速度を作る.
+                twist.linear.x = (
+                    self.throttle_norm
+                    * self.max_linear
+                    * self.linear_gain
+                )
+
+                # ハンドル角度から旋回角速度を作る.
+                angular_command = self.calculate_angular_command()
+
+                # 後退時は操舵方向を反転する.
+                if self.linear_gain < 0:
+                    twist.angular.z = -angular_command
+                else:
+                    twist.angular.z = angular_command
+
+                # 小さな直進指令を0にする.
+                if abs(twist.linear.x) < self.linear_command_deadzone:
+                    twist.linear.x = 0.0
+
+                # 小さな旋回指令を0にする.
+                if abs(twist.angular.z) < self.angular_command_deadzone:
+                    twist.angular.z = 0.0
+
+            self.cmd_pub.publish(twist)
             return
 
-        twist = Twist()
-
-        if self.brake_active:
-            twist.linear.x = 0.0
-        else:
-            twist.linear.x = self.throttle_norm * self.max_linear * self.linear_gain
-
-        # ハンドル角からKobukiの旋回速度を作る.
-        # 前進と後退で旋回方向を変える.
-        # if self.linear_gain < 0:
-        #     twist.angular.z = self.steering_norm * self.max_angular
-        # else:
-        #     twist.angular.z = -self.steering_norm * self.max_angular
-        
-        # ハンドル角度から旋回角速度を計算する。
-        angular_command = self.calculate_angular_command()
-
-        # 後退時は操舵方向を反転する。
-        if self.linear_gain < 0:
-            twist.angular.z = -angular_command
-        else:
-            twist.angular.z = angular_command
-            
-        self.cmd_pub.publish(twist)
+        # 手動操作終了後にゼロ指令を数回だけ送る.
+        if self.stop_publish_remaining > 0:
+            self.cmd_pub.publish(Twist())
+            self.stop_publish_remaining -= 1
 
     def destroy_node(self):
         self.running = False

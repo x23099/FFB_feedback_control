@@ -2,6 +2,7 @@ ffb_follow_node:
   ros__parameters:
 
     # トピック名
+    # kobuki用
     auto_cmd_topic: /cmd_vel_auto
     odom_topic: /odom
     manual_active_topic: /handle/manual_active

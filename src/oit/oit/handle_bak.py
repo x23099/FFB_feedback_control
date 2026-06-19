@@ -66,6 +66,18 @@ class HandleNode(Node):
 
         # ブレーキ判定
         self.brake_threshold_raw = 240
+        
+        # 小さな直進指令を0として扱う閾値.
+        self.linear_command_deadzone = 0.01
+
+        # 小さな旋回指令を0として扱う閾値.
+        self.angular_command_deadzone = 0.03
+
+        # 手動操作終了時にゼロ指令を送る回数.
+        self.stop_publish_cycles = 3
+
+        # 残りのゼロ指令送信回数.
+        self.stop_publish_remaining = 0
 
         # ===== G923を開く =====
 
@@ -308,6 +320,10 @@ class HandleNode(Node):
             self.linear_gain = 2.5
 
         elif event.code == 705:
+            self.gear = 6
+            self.linear_gain = 3.0
+            
+        elif event.code == 706:
             self.gear = -1
             self.linear_gain = -0.5
 
@@ -321,8 +337,7 @@ class HandleNode(Node):
     def publish_loop(self):
         """
         現在の入力状態を20Hzでpublishし続ける.
-        ハンドル角は常にpublishする.
-        /cmd_vel_joyはアクセルまたはブレーキ操作中だけpublishする.
+        手動操作終了時はゼロ指令を数回送ってからpublishを停止する.
         """
 
         # ハンドル角度[deg]をpublish.
@@ -340,45 +355,60 @@ class HandleNode(Node):
         gear_msg.data = int(self.gear)
         self.gear_pub.publish(gear_msg)
 
-        # アクセルまたはブレーキ操作中なら手動介入中とする。
-        self.manual_active = (
+        # アクセルかブレーキ操作中を手動操作として扱う.
+        manual_active = (
             self.throttle_norm > self.throttle_threshold
             or self.brake_active
         )
 
-        # 手動介入状態をFFB側へ20Hzで通知する。
+        # FFB側へ手動操作状態を通知する.
         manual_msg = Bool()
-        manual_msg.data = self.manual_active
+        manual_msg.data = manual_active
         self.manual_active_pub.publish(manual_msg)
 
-        # 手動操作中でなければ/cmd_vel_joyは送信しない。
-        if not self.manual_active:
+        if manual_active:
+            # 手動操作終了後に送るゼロ指令回数を準備する.
+            self.stop_publish_remaining = self.stop_publish_cycles
+
+            twist = Twist()
+
+            if self.brake_active:
+                # ブレーキ中は直進と旋回を両方停止する.
+                twist.linear.x = 0.0
+                twist.angular.z = 0.0
+
+            else:
+                # アクセル量とギア倍率から直進速度を作る.
+                twist.linear.x = (
+                    self.throttle_norm
+                    * self.max_linear
+                    * self.linear_gain
+                )
+
+                # ハンドル角度から旋回角速度を作る.
+                angular_command = self.calculate_angular_command()
+
+                # 後退時は操舵方向を反転する.
+                if self.linear_gain < 0:
+                    twist.angular.z = -angular_command
+                else:
+                    twist.angular.z = angular_command
+
+                # 小さな直進指令を0にする.
+                if abs(twist.linear.x) < self.linear_command_deadzone:
+                    twist.linear.x = 0.0
+
+                # 小さな旋回指令を0にする.
+                if abs(twist.angular.z) < self.angular_command_deadzone:
+                    twist.angular.z = 0.0
+
+            self.cmd_pub.publish(twist)
             return
 
-        twist = Twist()
-
-        if self.brake_active:
-            twist.linear.x = 0.0
-        else:
-            twist.linear.x = self.throttle_norm * self.max_linear * self.linear_gain
-
-        # ハンドル角からKobukiの旋回速度を作る.
-        # 前進と後退で旋回方向を変える.
-        # if self.linear_gain < 0:
-        #     twist.angular.z = self.steering_norm * self.max_angular
-        # else:
-        #     twist.angular.z = -self.steering_norm * self.max_angular
-        
-        # ハンドル角度から旋回角速度を計算する。
-        angular_command = self.calculate_angular_command()
-
-        # 後退時は操舵方向を反転する。
-        if self.linear_gain < 0:
-            twist.angular.z = -angular_command
-        else:
-            twist.angular.z = angular_command
-            
-        self.cmd_pub.publish(twist)
+        # 手動操作終了後にゼロ指令を数回だけ送る.
+        if self.stop_publish_remaining > 0:
+            self.cmd_pub.publish(Twist())
+            self.stop_publish_remaining -= 1
 
     def destroy_node(self):
         self.running = False

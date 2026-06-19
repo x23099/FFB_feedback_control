@@ -1,0 +1,54 @@
+ffb_follow_node:
+  ros__parameters:
+
+    # AIFORMULA用トピック.
+    auto_cmd_topic: /aiformula_control/twist_mux/cmd_vel
+    odom_topic: /aiformula_sensing/gyro_odometry_publisher/odom
+    manual_active_topic: /handle/manual_active
+
+    # G923デバイス.
+    device_path: /dev/input/by-id/usb-Logitech_G923_Racing_Wheel_for_PlayStation_4_and_PC_USYMUGUXEREJOFORUFUMEZIDU-event-joystick
+
+    # Autocenter.
+    auto_autocenter: 0
+    manual_autocenter: 60
+    idle_autocenter: 15
+    shutdown_autocenter: 80
+
+    # 角度変換.
+    handle_limit_deg: 450.0
+    yaw_to_handle_ratio: 1.25
+    invert_yaw_sign: true
+    center_offset_deg: -3.0
+
+    # 自律旋回判定.
+    auto_angular_threshold: 0.05
+    auto_cmd_timeout: 0.3
+
+    # 自律旋回中のSpring.
+    auto_spring_coeff: 18688
+    auto_spring_saturation: 24576
+
+    # 手動操作中のSpring.
+    manual_spring_coeff: 18688
+    manual_spring_saturation: 24576
+
+    # 待機中のSpring.
+    idle_spring_coeff: 12288
+    idle_spring_saturation: 18432
+
+    # Spring共通設定.
+    spring_deadband: 0
+    spring_replay_ms: 30000
+
+    # Spring更新.
+    max_center_step: 400
+    coeff_step: 512
+    saturation_step: 512
+
+    center_send_threshold: 20
+    coeff_send_threshold: 128
+    saturation_send_threshold: 128
+
+    effect_refresh_sec: 1.0
+    spring_update_period: 0.05
