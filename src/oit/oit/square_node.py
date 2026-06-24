@@ -33,7 +33,7 @@ class SquareNode(Node):
         """
         self.side_length = 0.5          # 正方形の1辺の長さ [m]
         self.linear_speed = 0.15        # 直進速度 [m/s]
-        self.angular_speed = 0.7       # 旋回速度 [rad/s] 右回転なのでマイナス
+        self.angular_speed = -0.7       # 旋回速度 [rad/s] 右回転なのでマイナス
         self.dist_thresh = 0.02         # 直進完了の許容誤差 [m]
         self.turn_angle = math.radians(90.0)  # 旋回角度 90度をradに変換
         self.turn_thresh = math.radians(5.0)  # 旋回完了の許容誤差 3度

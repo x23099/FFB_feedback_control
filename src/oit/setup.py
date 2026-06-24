@@ -30,6 +30,7 @@ setup(
             'ffb_test = oit.ffb_test:main',
             'ffb_follow = oit.ffb_follow:main',
             'spring = oit.spring_test:main',
+            'spin = oit.spin_node:main',
         ],
     },
 )

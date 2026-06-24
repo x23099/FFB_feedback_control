@@ -38,7 +38,7 @@ class HandleNode(Node):
         self.gear_pub = self.create_publisher(Int32, '/handle/gear', 10)
 
         # G923のLED制御用hidraw.
-        self.led_hidraw_path = '/dev/hidraw4'
+        self.led_hidraw_path = '/dev/g923_led'
 
         # LEDの現在状態.
         self.led_current_mask = None

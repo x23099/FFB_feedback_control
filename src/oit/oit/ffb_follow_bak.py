@@ -16,105 +16,353 @@ from evdev import InputDevice, ecodes, ff
 class FfbFollowNode(Node):
     def __init__(self):
         super().__init__('ffb_follow_node')
+        # ROSパラメータを宣言する
+        self.declare_ros_parameters()
 
-        # G923デバイス設定
-        self.device_path = (
-            '/dev/input/by-id/'
-            'usb-Logitech_G923_Racing_Wheel_for_PlayStation_4_and_PC_'
-            'USYMUGUXEREJOFORUFUMEZIDU-event-joystick'
+        # ROSパラメータを読み込む
+        self.load_ros_parameters()
+
+        # 実行状態を初期化する
+        self.initialize_runtime_states()
+
+        # G923を初期化する
+        self.initialize_ffb_device()
+
+        # ROS通信を初期化する
+        self.initialize_ros_interfaces()
+
+        self.get_logger().info(
+            'FFB follow node started.'
+        )
+    
+    def declare_ros_parameters(self):
+        """
+        ROSパラメータとデフォルト値を宣言する.
+        """
+
+        # トピック名
+        self.declare_parameter(
+            'auto_cmd_topic',
+            '/cmd_vel_auto'
         )
 
-        # G923を開く
-        self.dev = InputDevice(self.device_path)
-        self.get_logger().info(f'Opened FFB device: {self.dev.name}')
+        self.declare_parameter(
+            'odom_topic',
+            '/odom'
+        )
 
-        '''
-        # Autocenter設定
-        '''
-        # 動作状態ごとのAutocenter強度
-        self.auto_autocenter = 0
-        self.manual_autocenter = 60
-        self.idle_autocenter = 15
+        self.declare_parameter(
+            'manual_active_topic',
+            '/handle/manual_active'
+        )
 
-        # 現在設定中の値.重複したコマンド送信を防ぐ
+        # G923デバイス
+        self.declare_parameter(
+            'device_path',
+            (
+                '/dev/input/by-id/'
+                'usb-Logitech_G923_Racing_Wheel_for_PlayStation_4_and_PC_'
+                'USYMUGUXEREJOFORUFUMEZIDU-event-joystick'
+            )
+        )
+
+        # Autocenter
+        self.declare_parameter(
+            'auto_autocenter',
+            0
+        )
+
+        self.declare_parameter(
+            'manual_autocenter',
+            60
+        )
+
+        self.declare_parameter(
+            'idle_autocenter',
+            15
+        )
+
+        self.declare_parameter(
+            'shutdown_autocenter',
+            80
+        )
+
+        # 角度変換
+        self.declare_parameter(
+            'handle_limit_deg',
+            450.0
+        )
+
+        self.declare_parameter(
+            'yaw_to_handle_ratio',
+            450.0 / 360.0
+        )
+
+        self.declare_parameter(
+            'invert_yaw_sign',
+            True
+        )
+
+        self.declare_parameter(
+            'center_offset_deg',
+            -3.0
+        )
+
+        # 自律旋回判定
+        self.declare_parameter(
+            'auto_angular_threshold',
+            0.05
+        )
+
+        self.declare_parameter(
+            'auto_cmd_timeout',
+            0.3
+        )
+
+        # 自律旋回中のSpring
+        self.declare_parameter(
+            'auto_spring_coeff',
+            0x4900
+        )
+
+        self.declare_parameter(
+            'auto_spring_saturation',
+            0x6000
+        )
+
+        # 手動操作中のSpring
+        self.declare_parameter(
+            'manual_spring_coeff',
+            0x4900
+        )
+
+        self.declare_parameter(
+            'manual_spring_saturation',
+            0x6000
+        )
+
+        # 待機中のSpring
+        self.declare_parameter(
+            'idle_spring_coeff',
+            0x3000
+        )
+
+        self.declare_parameter(
+            'idle_spring_saturation',
+            0x4800
+        )
+
+        self.declare_parameter(
+            'spring_deadband',
+            0
+        )
+
+        # Spring更新
+        self.declare_parameter(
+            'max_center_step',
+            400
+        )
+
+        self.declare_parameter(
+            'coeff_step',
+            0x0200
+        )
+
+        self.declare_parameter(
+            'saturation_step',
+            0x0200
+        )
+
+        self.declare_parameter(
+            'center_send_threshold',
+            20
+        )
+
+        self.declare_parameter(
+            'coeff_send_threshold',
+            0x0080
+        )
+
+        self.declare_parameter(
+            'saturation_send_threshold',
+            0x0080
+        )
+
+        self.declare_parameter(
+            'effect_refresh_sec',
+            1.0
+        )
+
+        self.declare_parameter(
+            'spring_update_period',
+            0.05
+        )
+
+        self.declare_parameter(
+            'spring_replay_ms',
+            30000
+        )
+    
+    def load_ros_parameters(self):
+        """
+        ROSパラメータをクラス変数へ読み込む.
+        """
+
+        # トピック名
+        self.auto_cmd_topic = str(
+            self.get_parameter('auto_cmd_topic').value
+        )
+
+        self.odom_topic = str(
+            self.get_parameter('odom_topic').value
+        )
+
+        self.manual_active_topic = str(
+            self.get_parameter('manual_active_topic').value
+        )
+
+        # G923デバイス
+        self.device_path = str(
+            self.get_parameter('device_path').value
+        )
+
+        # Autocenter
+        self.auto_autocenter = int(
+            self.get_parameter('auto_autocenter').value
+        )
+
+        self.manual_autocenter = int(
+            self.get_parameter('manual_autocenter').value
+        )
+
+        self.idle_autocenter = int(
+            self.get_parameter('idle_autocenter').value
+        )
+
+        self.shutdown_autocenter = int(
+            self.get_parameter('shutdown_autocenter').value
+        )
+
+        # 角度変換
+        self.handle_limit_deg = float(
+            self.get_parameter('handle_limit_deg').value
+        )
+
+        self.yaw_to_handle_ratio = float(
+            self.get_parameter('yaw_to_handle_ratio').value
+        )
+
+        self.invert_yaw_sign = bool(
+            self.get_parameter('invert_yaw_sign').value
+        )
+
+        self.center_offset_deg = float(
+            self.get_parameter('center_offset_deg').value
+        )
+
+        # 自律旋回判定
+        self.auto_angular_threshold = float(
+            self.get_parameter('auto_angular_threshold').value
+        )
+
+        self.auto_cmd_timeout = float(
+            self.get_parameter('auto_cmd_timeout').value
+        )
+
+        # 自律旋回中のSpring
+        self.auto_spring_coeff = int(
+            self.get_parameter('auto_spring_coeff').value
+        )
+
+        self.auto_spring_saturation = int(
+            self.get_parameter(
+                'auto_spring_saturation'
+            ).value
+        )
+
+        # 手動操作中のSpring
+        self.manual_spring_coeff = int(
+            self.get_parameter('manual_spring_coeff').value
+        )
+
+        self.manual_spring_saturation = int(
+            self.get_parameter(
+                'manual_spring_saturation'
+            ).value
+        )
+
+        # 待機中のSpring
+        self.idle_spring_coeff = int(
+            self.get_parameter('idle_spring_coeff').value
+        )
+
+        self.idle_spring_saturation = int(
+            self.get_parameter(
+                'idle_spring_saturation'
+            ).value
+        )
+
+        self.spring_deadband = int(
+            self.get_parameter('spring_deadband').value
+        )
+
+        # Spring更新
+        self.max_center_step = int(
+            self.get_parameter('max_center_step').value
+        )
+
+        self.coeff_step = int(
+            self.get_parameter('coeff_step').value
+        )
+
+        self.saturation_step = int(
+            self.get_parameter('saturation_step').value
+        )
+
+        self.center_send_threshold = int(
+            self.get_parameter(
+                'center_send_threshold'
+            ).value
+        )
+
+        self.coeff_send_threshold = int(
+            self.get_parameter(
+                'coeff_send_threshold'
+            ).value
+        )
+
+        self.saturation_send_threshold = int(
+            self.get_parameter(
+                'saturation_send_threshold'
+            ).value
+        )
+
+        self.effect_refresh_sec = float(
+            self.get_parameter('effect_refresh_sec').value
+        )
+
+        self.spring_update_period = float(
+            self.get_parameter(
+                'spring_update_period'
+            ).value
+        )
+
+        self.spring_replay_ms = int(
+            self.get_parameter('spring_replay_ms').value
+        )
+
+        # FF_SPRINGのcenter値上限
+        self.spring_center_limit = 32767
+    
+    
+    def initialize_runtime_states(self):
+        """
+        実行中に変化する状態を初期化する.
+        """
+
+        # 現在設定中のAutocenter値
         self.current_autocenter = None
 
-        # 起動時は待機用の強さにする
-        self.apply_autocenter(self.idle_autocenter)
-        
-        '''
-        角度変換設定
-        '''
-        # 450度を360度として扱う
-        self.handle_limit_deg = 450.0
-
-        # center値は約-32767〜32767の範囲で扱う
-        self.spring_center_limit = 32767
-
-        # Kobukiが360度旋回したら,ハンドルは450度動く対応
-        self.kobuki_to_handle_ratio = 450.0 / 360.0
-
-        # 右旋回時の符号を合わせる
-        self.invert_yaw_sign = True
-
-        # ハンドルを中心に戻すための補正値
-        # 自律旋回中だけ適用する
-        self.center_offset_deg = -3.0
-
-        '''
-        自律旋回判定設定
-        '''
-        # angular.zがこの値以上なら旋回指令とみなす
-        self.auto_angular_threshold = 0.05
-
-        # この秒数以上,旋回指令が来なければ旋回終了とみなす
-        self.auto_cmd_timeout = 0.3
-
-        '''
-        Spring強度設定
-        '''
-        # 自律走行用のSpring設定
-        self.auto_spring_coeff = 0x4900
-        self.auto_spring_saturation = 0x6000
-
-        # 手動操作時の基本反力
-        self.manual_spring_coeff = 0x4900
-        self.manual_spring_saturation = 0x6000
-
-        # 自律直進中の基本的なハンドルの重さ
-        self.idle_spring_coeff = 0x3000
-        self.idle_spring_saturation = 0x4800
-
-        # 中心付近で力を出さない範囲
-        self.spring_deadband = 0
-
-        '''
-        Spring更新設定
-        '''
-        # 1周期でcenterを変化させる最大量
-        self.max_center_step = 400
-
-        # 強さを急変させないための更新幅
-        self.coeff_step = 0x0200
-        self.saturation_step = 0x0200
-
-        # 小さな変化ではSpringを更新しない
-        self.center_send_threshold = 20
-        self.coeff_send_threshold = 0x0080
-        self.saturation_send_threshold = 0x0080
-
-        # 一定時間ごとにSpringを再送する
-        self.effect_refresh_sec = 1.0
-
-        # 20HzでSpring中心を更新する
-        self.spring_update_period = 0.05
-
-        # Springエフェクトの再生時間
-        self.spring_replay_ms = 30000
-
-        '''
-        走行状態
-        '''
         # 現在のKobuki yaw角[rad]
         self.current_yaw = 0.0
 
@@ -124,13 +372,13 @@ class FfbFollowNode(Node):
         # 自律旋回開始時のyaw角[rad]
         self.turn_start_yaw = None
 
-        # 自律旋回中かどうか判断
+        # 自律旋回中かどうか
         self.auto_turning = False
 
         # 手動操作中かどうか
         self.manual_active = False
 
-        # /cmd_vel_autoが最後に来た時刻
+        # /cmd_vel_autoを最後に受信した時刻
         self.last_auto_cmd_time = 0.0
 
         # 目標ハンドル角度[deg]
@@ -139,40 +387,58 @@ class FfbFollowNode(Node):
         # 自律走行から計算したSpring中心
         self.auto_target_center = 0
 
-        '''
-        適用中のSpring状態
-        '''
-        # 実際に現在適用しているSpring中心値
+        # 現在適用しているSpring中心
         self.applied_center = 0
 
-        # 現在適用中のSpringパラメータ
+        # 現在適用しているSpring係数
         self.applied_coeff = self.idle_spring_coeff
+
+        # 現在適用しているSpring上限値
         self.applied_saturation = self.idle_spring_saturation
 
         # 現在登録しているSpringエフェクトID
         self.spring_effect_id = None
 
-        # 最後に送った値
+        # 最後に送信したSpring設定
         self.last_sent_center = None
         self.last_sent_coeff = None
         self.last_sent_saturation = None
-        self.last_effect_update_time = 0.0
 
-        '''
-        ROS通信
-        '''
+        # 最後にSpringを更新した時刻
+        self.last_effect_update_time = 0.0    
+    
+    def initialize_ffb_device(self):
+        """
+        G923を開き,待機用Autocenterを設定する.
+        """
+
+        self.dev = InputDevice(self.device_path)
+
+        self.get_logger().info(
+            f'Opened FFB device: {self.dev.name}'
+        )
+
+        self.apply_autocenter(
+            self.idle_autocenter
+        )
+    
+    def initialize_ros_interfaces(self):
+        """
+        ROSの購読とタイマーを作成する.
+        """
+
         # 自律走行の速度指令
         self.create_subscription(
             Twist,
-            '/cmd_vel_auto',
+            self.auto_cmd_topic,
             self.auto_cmd_callback,
             10
         )
 
-        # Kobukiのodom
+        # 車体のオドメトリ
         self.create_subscription(
             Odometry,
-            '/odom',
+            self.odom_topic,
             self.odom_callback,
             10
         )
@@ -180,7 +446,7 @@ class FfbFollowNode(Node):
         # 手動介入状態
         self.create_subscription(
             Bool,
-            '/handle/manual_active',
+            self.manual_active_topic,
             self.manual_active_callback,
             10
         )
@@ -190,9 +456,7 @@ class FfbFollowNode(Node):
             self.spring_update_period,
             self.spring_update_loop
         )
-
-        self.get_logger().info('FFB follow node started.')
-
+    
     '''
     Autocenter制御
     '''
@@ -302,7 +566,7 @@ class FfbFollowNode(Node):
         # Kobukiの旋回角をハンドル角へ変換する
         target_handle_deg = (
             yaw_delta_deg
-            * self.kobuki_to_handle_ratio
+            * self.yaw_to_handle_ratio
         )
 
         target_handle_deg = max(
@@ -626,11 +890,14 @@ class FfbFollowNode(Node):
     終了処理
     """
     def destroy_node(self):
-        # ノード終了時の処理.
-        # Springを止めて,通常のセンタリング力を戻す.
+        #ノード終了時の処理.
+        #Springを止めて,通常のセンタリング力を戻す.
         
         self.stop_spring()
-        self.set_autocenter(80)
+
+        self.set_autocenter(
+            self.shutdown_autocenter
+        )
 
         try:
             self.dev.close()

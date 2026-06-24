@@ -27,29 +27,29 @@ ffb_follow_node:
     auto_cmd_timeout: 0.3
 
     # 自律旋回中のSpring
-    auto_spring_coeff: 18688       # 0x4900 
-    auto_spring_saturation: 24576  # 0x6000
+    auto_spring_coeff: 15000       # 0x4900 
+    auto_spring_saturation: 22000  # 0x6000
 
     # 手動操作中のSpring
-    manual_spring_coeff: 18688
-    manual_spring_saturation: 24576
+    manual_spring_coeff: 13500 # 18688yatta
+    manual_spring_saturation: 20000 # 24576
 
     # 待機中のSpring
-    idle_spring_coeff: 12288       # 0x3000
-    idle_spring_saturation: 18432  # 0x4800
+    idle_spring_coeff: 13500       # 0x3000
+    idle_spring_saturation: 20000  # 0x4800
 
     # Spring共通設定
     spring_deadband: 0
     spring_replay_ms: 30000
 
     # Spring更新
-    max_center_step: 400
+    max_center_step: 150 # 400yatta
     coeff_step: 512               # 0x0200
     saturation_step: 512          # 0x0200
 
-    center_send_threshold: 20
+    center_send_threshold: 5 # 20yatta
     coeff_send_threshold: 128     # 0x0080
     saturation_send_threshold: 128
 
-    effect_refresh_sec: 1.0
-    spring_update_period: 0.05
+    effect_refresh_sec: 0.5 # 1.0yatta
+    spring_update_period: 0.01 # 0.05yatta
