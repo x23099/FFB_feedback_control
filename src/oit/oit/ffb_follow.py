@@ -56,6 +56,16 @@ class FfbFollowNode(Node):
             '/handle/manual_active'
         )
 
+        self.declare_parameter(
+            'gear_topic',
+            '/handle/gear'
+        )
+
+        self.declare_parameter(
+            'steering_norm_topic',
+            '/handle/steering_norm'
+        )
+
         # G923デバイス
         self.declare_parameter(
             'device_path',
@@ -202,6 +212,146 @@ class FfbFollowNode(Node):
             'spring_replay_ms',
             30000
         )
+
+        # Damper
+        self.declare_parameter(
+            'damper_enabled',
+            False
+        )
+
+        self.declare_parameter(
+            'damper_coeff',
+            2500
+        )
+
+        self.declare_parameter(
+            'damper_saturation',
+            6000
+        )
+
+        self.declare_parameter(
+            'damper_deadband',
+            0
+        )
+
+        # カーブ負荷FFB
+        self.declare_parameter(
+            'corner_load_enabled',
+            True
+        )
+
+        self.declare_parameter(
+            'corner_load_reference',
+            0.8
+        )
+
+        self.declare_parameter(
+            'corner_load_min_speed',
+            0.10
+        )
+
+        self.declare_parameter(
+            'corner_load_coeff_gain',
+            4000
+        )
+
+        self.declare_parameter(
+            'corner_load_saturation_gain',
+            5000
+        )
+
+        self.declare_parameter(
+            'corner_load_filter_alpha',
+            0.25
+        )
+
+        # カーブ負荷による中心ずらしFFB
+        self.declare_parameter(
+            'corner_center_shift_enabled',
+            True
+        )
+
+        self.declare_parameter(
+            'corner_center_shift_max_deg',
+            45.0
+        )
+
+        self.declare_parameter(
+            'corner_center_shift_min_rate',
+            0.10
+        )
+
+        self.declare_parameter(
+            'corner_center_shift_direction',
+            -1.0
+        )
+
+        # カーブ負荷によるAutocenter補正
+        self.declare_parameter(
+            'corner_autocenter_enabled',
+            True
+        )
+
+        self.declare_parameter(
+            'corner_autocenter_min_rate',
+            0.20
+        )
+
+        self.declare_parameter(
+            'corner_autocenter_max',
+            85
+        )
+
+        self.declare_parameter(
+            'corner_autocenter_update_threshold',
+            5
+        )
+
+        # 高ギアカーブ時のAutocenter切り替え
+        self.declare_parameter(
+            'corner_gate_autocenter_enabled',
+            True
+        )
+
+        self.declare_parameter(
+            'corner_gate_min_gear',
+            4
+        )
+
+        self.declare_parameter(
+            'corner_gate_min_speed',
+            0.45
+        )
+
+        self.declare_parameter(
+            'corner_gate_min_angular',
+            0.35
+        )
+
+        self.declare_parameter(
+            'corner_gate_min_steering_norm',
+            0.20
+        )
+
+        self.declare_parameter(
+            'corner_gate_min_load_rate',
+            0.25
+        )
+
+        self.declare_parameter(
+            'corner_gate_enter_sec',
+            0.15
+        )
+
+        self.declare_parameter(
+            'corner_gate_hold_sec',
+            0.50
+        )
+
+        self.declare_parameter(
+            'corner_gate_autocenter',
+            95
+        )
     
     def load_ros_parameters(self):
         """
@@ -219,6 +369,14 @@ class FfbFollowNode(Node):
 
         self.manual_active_topic = str(
             self.get_parameter('manual_active_topic').value
+        )
+
+        self.gear_topic = str(
+            self.get_parameter('gear_topic').value
+        )
+
+        self.steering_norm_topic = str(
+            self.get_parameter('steering_norm_topic').value
         )
 
         # G923デバイス
@@ -350,6 +508,127 @@ class FfbFollowNode(Node):
         self.spring_replay_ms = int(
             self.get_parameter('spring_replay_ms').value
         )
+        
+        # Damper
+        self.damper_enabled = bool(
+            self.get_parameter('damper_enabled').value
+        )
+
+        self.damper_coeff = int(
+            self.get_parameter('damper_coeff').value
+        )
+
+        self.damper_saturation = int(
+            self.get_parameter('damper_saturation').value
+        )
+
+        self.damper_deadband = int(
+            self.get_parameter('damper_deadband').value
+        )
+
+        # カーブ負荷FFB
+        self.corner_load_enabled = bool(
+            self.get_parameter('corner_load_enabled').value
+        )
+
+        self.corner_load_reference = float(
+            self.get_parameter('corner_load_reference').value
+        )
+
+        self.corner_load_min_speed = float(
+            self.get_parameter('corner_load_min_speed').value
+        )
+
+        self.corner_load_coeff_gain = int(
+            self.get_parameter('corner_load_coeff_gain').value
+        )
+
+        self.corner_load_saturation_gain = int(
+            self.get_parameter(
+                'corner_load_saturation_gain'
+            ).value
+        )
+
+        self.corner_load_filter_alpha = float(
+            self.get_parameter('corner_load_filter_alpha').value
+        )
+
+        # カーブ負荷による中心ずらしFFB
+        self.corner_center_shift_enabled = bool(
+            self.get_parameter('corner_center_shift_enabled').value
+        )
+
+        self.corner_center_shift_max_deg = float(
+            self.get_parameter('corner_center_shift_max_deg').value
+        )
+
+        self.corner_center_shift_min_rate = float(
+            self.get_parameter('corner_center_shift_min_rate').value
+        )
+
+        self.corner_center_shift_direction = float(
+            self.get_parameter('corner_center_shift_direction').value
+        )
+
+        # カーブ負荷によるAutocenter補正
+        self.corner_autocenter_enabled = bool(
+            self.get_parameter('corner_autocenter_enabled').value
+        )
+
+        self.corner_autocenter_min_rate = float(
+            self.get_parameter('corner_autocenter_min_rate').value
+        )
+
+        self.corner_autocenter_max = int(
+            self.get_parameter('corner_autocenter_max').value
+        )
+
+        self.corner_autocenter_update_threshold = int(
+            self.get_parameter(
+                'corner_autocenter_update_threshold'
+            ).value
+        )
+
+        # 高ギアカーブ時のAutocenter切り替え
+        self.corner_gate_autocenter_enabled = bool(
+            self.get_parameter(
+                'corner_gate_autocenter_enabled'
+            ).value
+        )
+
+        self.corner_gate_min_gear = int(
+            self.get_parameter('corner_gate_min_gear').value
+        )
+
+        self.corner_gate_min_speed = float(
+            self.get_parameter('corner_gate_min_speed').value
+        )
+
+        self.corner_gate_min_angular = float(
+            self.get_parameter('corner_gate_min_angular').value
+        )
+
+        self.corner_gate_min_steering_norm = float(
+            self.get_parameter(
+                'corner_gate_min_steering_norm'
+            ).value
+        )
+
+        self.corner_gate_min_load_rate = float(
+            self.get_parameter('corner_gate_min_load_rate').value
+        )
+
+        self.corner_gate_enter_sec = float(
+            self.get_parameter('corner_gate_enter_sec').value
+        )
+
+        self.corner_gate_hold_sec = float(
+            self.get_parameter('corner_gate_hold_sec').value
+        )
+
+        self.corner_gate_autocenter = int(
+            self.get_parameter('corner_gate_autocenter').value
+        )
 
         # FF_SPRINGのcenter値上限
         self.spring_center_limit = 32767
@@ -390,6 +669,24 @@ class FfbFollowNode(Node):
         # 手動操作中かどうか
         self.manual_active = False
 
+        # handle.pyから受信した現在ギア.
+        self.current_gear = 0
+
+        # handle.pyから受信したステア量[-1.0〜1.0].
+        self.steering_norm = 0.0
+
+        # 高ギアカーブ判定中かどうか.
+        self.corner_gate_active = False
+
+        # 高ギアカーブ条件を満たし始めた時刻.
+        self.corner_gate_candidate_since = None
+
+        # 高ギアカーブ条件を最後に満たした時刻.
+        self.corner_gate_last_active_time = 0.0
+
+        # 高ギアカーブ判定の理由.
+        self.corner_gate_reason = 'inactive'
+
         # /cmd_vel_autoを最後に受信した時刻
         self.last_auto_cmd_time = 0.0
 
@@ -410,6 +707,39 @@ class FfbFollowNode(Node):
 
         # 現在登録しているSpringエフェクトID
         self.spring_effect_id = None
+        
+        # 現在登録しているDamperエフェクトID
+        self.damper_effect_id = None
+
+        # odomから取得した走行速度[m/s].
+        self.odom_linear_x = 0.0
+
+        # odomから取得した旋回角速度[rad/s].
+        self.odom_angular_z = 0.0
+
+        # カーブ負荷の生値.
+        self.corner_load_raw = 0.0
+
+        # 平滑化したカーブ負荷.
+        self.corner_load = 0.0
+
+        # 0.0〜1.0に正規化したカーブ負荷.
+        self.corner_load_rate = 0.0
+
+        # カーブ負荷で追加したSpring係数.
+        self.corner_extra_coeff = 0
+
+        # カーブ負荷で追加したSpring上限.
+        self.corner_extra_saturation = 0
+
+        # カーブ負荷でずらしたSpring中心角度[deg].
+        self.corner_center_shift_deg = 0.0
+
+        # カーブ負荷でずらしたSpring中心値.
+        self.corner_center_shift_center = 0
+
+        # カーブ負荷で変更したAutocenter値.
+        self.corner_autocenter = self.manual_autocenter
 
         # 最後に送信したSpring設定
         self.last_sent_center = None
@@ -433,6 +763,9 @@ class FfbFollowNode(Node):
         self.apply_autocenter(
             self.idle_autocenter
         )
+        
+        if self.damper_enabled:
+            self.play_damper()
     
     def initialize_ros_interfaces(self):
         """
@@ -460,6 +793,22 @@ class FfbFollowNode(Node):
             Bool,
             self.manual_active_topic,
             self.manual_active_callback,
+            10
+        )
+
+        # 現在ギア
+        self.create_subscription(
+            Int32,
+            self.gear_topic,
+            self.gear_callback,
+            10
+        )
+
+        # ステアリング入力
+        self.create_subscription(
+            Float32,
+            self.steering_norm_topic,
+            self.steering_norm_callback,
             10
         )
 
@@ -509,6 +858,72 @@ class FfbFollowNode(Node):
         self.spring_saturation_pub = self.create_publisher(
             Int32,
             '/ffb/spring_saturation',
+            10
+        )
+
+        self.corner_load_pub = self.create_publisher(
+            Float32,
+            '/ffb/corner_load',
+            10
+        )
+
+        self.corner_load_rate_pub = self.create_publisher(
+            Float32,
+            '/ffb/corner_load_rate',
+            10
+        )
+
+        self.corner_extra_coeff_pub = self.create_publisher(
+            Int32,
+            '/ffb/corner_extra_coeff',
+            10
+        )
+
+        self.corner_extra_saturation_pub = self.create_publisher(
+            Int32,
+            '/ffb/corner_extra_saturation',
+            10
+        )
+
+        self.corner_center_shift_deg_pub = self.create_publisher(
+            Float32,
+            '/ffb/corner_center_shift_deg',
+            10
+        )
+
+        self.corner_center_shift_center_pub = self.create_publisher(
+            Int32,
+            '/ffb/corner_center_shift_center',
+            10
+        )
+
+        self.corner_autocenter_pub = self.create_publisher(
+            Int32,
+            '/ffb/corner_autocenter',
+            10
+        )
+
+        self.corner_gate_active_pub = self.create_publisher(
+            Bool,
+            '/ffb/corner_gate_active',
+            10
+        )
+
+        self.corner_gate_reason_pub = self.create_publisher(
+            String,
+            '/ffb/corner_gate_reason',
+            10
+        )
+
+        self.current_gear_pub = self.create_publisher(
+            Int32,
+            '/ffb/current_gear',
+            10
+        )
+
+        self.steering_norm_pub = self.create_publisher(
+            Float32,
+            '/ffb/steering_norm',
             10
         )
 
@@ -615,6 +1030,10 @@ class FfbFollowNode(Node):
         self.current_yaw = current_yaw
         self.odom_received = True
 
+        self.odom_linear_x = msg.twist.twist.linear.x
+        self.odom_angular_z = msg.twist.twist.angular.z
+        self.update_corner_load()
+
         # 初回だけ前回yawを初期化する.
         if self.previous_yaw is None:
             self.previous_yaw = current_yaw
@@ -666,6 +1085,14 @@ class FfbFollowNode(Node):
             self.target_handle_deg
         )
 
+    def gear_callback(self, msg):
+        # handle.pyから現在ギアを受け取る.
+        self.current_gear = int(msg.data)
+
+    def steering_norm_callback(self, msg):
+        # handle.pyからステアリング入力を受け取る.
+        self.steering_norm = float(msg.data)
+
     def manual_active_callback(self, msg):
         # handle.pyから手動介入状態を受け取る.
         
@@ -690,6 +1117,10 @@ class FfbFollowNode(Node):
         else:
             # 手動終了後は待機用の弱いセンタリングへ戻す
             self.apply_autocenter(self.idle_autocenter)
+
+            self.corner_gate_active = False
+            self.corner_gate_candidate_since = None
+            self.corner_gate_reason = 'manual_inactive'
 
             self.reset_auto_turn()
 
@@ -746,6 +1177,355 @@ class FfbFollowNode(Node):
         saturation_msg.data = int(self.applied_saturation)
         self.spring_saturation_pub.publish(saturation_msg)
 
+        corner_load_msg = Float32()
+        corner_load_msg.data = float(self.corner_load)
+        self.corner_load_pub.publish(corner_load_msg)
+
+        corner_rate_msg = Float32()
+        corner_rate_msg.data = float(self.corner_load_rate)
+        self.corner_load_rate_pub.publish(corner_rate_msg)
+
+        extra_coeff_msg = Int32()
+        extra_coeff_msg.data = int(self.corner_extra_coeff)
+        self.corner_extra_coeff_pub.publish(extra_coeff_msg)
+
+        extra_saturation_msg = Int32()
+        extra_saturation_msg.data = int(self.corner_extra_saturation)
+        self.corner_extra_saturation_pub.publish(extra_saturation_msg)
+
+        center_shift_deg_msg = Float32()
+        center_shift_deg_msg.data = float(self.corner_center_shift_deg)
+        self.corner_center_shift_deg_pub.publish(center_shift_deg_msg)
+
+        center_shift_center_msg = Int32()
+        center_shift_center_msg.data = int(self.corner_center_shift_center)
+        self.corner_center_shift_center_pub.publish(center_shift_center_msg)
+
+        corner_autocenter_msg = Int32()
+        corner_autocenter_msg.data = int(self.corner_autocenter)
+        self.corner_autocenter_pub.publish(corner_autocenter_msg)
+
+        gate_active_msg = Bool()
+        gate_active_msg.data = bool(self.corner_gate_active)
+        self.corner_gate_active_pub.publish(gate_active_msg)
+
+        gate_reason_msg = String()
+        gate_reason_msg.data = str(self.corner_gate_reason)
+        self.corner_gate_reason_pub.publish(gate_reason_msg)
+
+        gear_msg = Int32()
+        gear_msg.data = int(self.current_gear)
+        self.current_gear_pub.publish(gear_msg)
+
+        steering_msg = Float32()
+        steering_msg.data = float(self.steering_norm)
+        self.steering_norm_pub.publish(steering_msg)
+
+    def update_corner_load(self):
+        """
+        速度と旋回角速度からカーブ負荷を計算する.
+        """
+        if not self.corner_load_enabled:
+            self.corner_load_raw = 0.0
+            self.corner_load = 0.0
+            self.corner_load_rate = 0.0
+            return
+
+        speed = abs(self.odom_linear_x)
+
+        if speed < self.corner_load_min_speed:
+            raw_load = 0.0
+        else:
+            raw_load = abs(
+                self.odom_linear_x
+                * self.odom_angular_z
+            )
+
+        alpha = max(
+            0.0,
+            min(1.0, self.corner_load_filter_alpha)
+        )
+
+        self.corner_load_raw = raw_load
+        self.corner_load = (
+            (1.0 - alpha) * self.corner_load
+            + alpha * raw_load
+        )
+
+        reference = max(
+            self.corner_load_reference,
+            0.001
+        )
+
+        self.corner_load_rate = max(
+            0.0,
+            min(1.0, self.corner_load / reference)
+        )
+
+    def apply_corner_load_feedback(
+        self,
+        desired_coeff,
+        desired_saturation
+    ):
+        """
+        カーブ負荷に応じてSpringを重くする.
+        """
+        self.corner_extra_coeff = 0
+        self.corner_extra_saturation = 0
+
+        if not self.corner_load_enabled:
+            return desired_coeff, desired_saturation
+
+        if not self.manual_active and not self.auto_turning:
+            return desired_coeff, desired_saturation
+
+        self.corner_extra_coeff = int(
+            self.corner_load_coeff_gain
+            * self.corner_load_rate
+        )
+
+        self.corner_extra_saturation = int(
+            self.corner_load_saturation_gain
+            * self.corner_load_rate
+        )
+
+        desired_coeff += self.corner_extra_coeff
+        desired_saturation += self.corner_extra_saturation
+
+        desired_coeff = max(
+            0,
+            min(32767, desired_coeff)
+        )
+
+        desired_saturation = max(
+            0,
+            min(32767, desired_saturation)
+        )
+
+        return desired_coeff, desired_saturation
+
+    def apply_corner_center_shift(self, desired_center):
+        """
+        カーブ負荷に応じてSpring中心を少し外側へずらす.
+        """
+        self.corner_center_shift_deg = 0.0
+        self.corner_center_shift_center = 0
+
+        if not self.corner_center_shift_enabled:
+            return desired_center
+
+        # 操作者へ伝える目的なので手動操作中だけ使う.
+        if not self.manual_active:
+            return desired_center
+
+        if self.corner_load_rate <= self.corner_center_shift_min_rate:
+            return desired_center
+
+        if abs(self.odom_angular_z) <= 0.03:
+            return desired_center
+
+        rate = (
+            self.corner_load_rate
+            - self.corner_center_shift_min_rate
+        ) / (
+            1.0 - self.corner_center_shift_min_rate
+        )
+
+        rate = max(
+            0.0,
+            min(1.0, rate)
+        )
+
+        curve_direction = math.copysign(
+            1.0,
+            self.odom_angular_z
+        )
+
+        shift_deg = (
+            curve_direction
+            * self.corner_center_shift_direction
+            * self.corner_center_shift_max_deg
+            * rate
+        )
+
+        shift_center = self.deg_to_spring_center(
+            shift_deg
+        )
+
+        self.corner_center_shift_deg = shift_deg
+        self.corner_center_shift_center = shift_center
+
+        shifted_center = desired_center + shift_center
+
+        shifted_center = max(
+            -self.spring_center_limit,
+            min(
+                self.spring_center_limit,
+                shifted_center
+            )
+        )
+
+        return shifted_center
+
+    def is_corner_gate_condition_met(self):
+        """
+        高ギアかつ一定以上のカーブ状態かを判定する.
+        """
+        if not self.manual_active:
+            self.corner_gate_reason = 'manual_inactive'
+            return False
+
+        if self.current_gear < self.corner_gate_min_gear:
+            self.corner_gate_reason = 'gear_low'
+            return False
+
+        if abs(self.odom_linear_x) < self.corner_gate_min_speed:
+            self.corner_gate_reason = 'speed_low'
+            return False
+
+        if abs(self.steering_norm) < self.corner_gate_min_steering_norm:
+            self.corner_gate_reason = 'steering_small'
+            return False
+
+        angular_ok = (
+            abs(self.odom_angular_z)
+            >= self.corner_gate_min_angular
+        )
+
+        load_ok = (
+            self.corner_load_rate
+            >= self.corner_gate_min_load_rate
+        )
+
+        if not angular_ok and not load_ok:
+            self.corner_gate_reason = 'curve_small'
+            return False
+
+        self.corner_gate_reason = 'active_condition'
+        return True
+
+    def update_corner_gate_state(self):
+        """
+        高ギアカーブ状態を時間条件付きでON/OFFする.
+        """
+        now = self.get_clock().now().nanoseconds / 1e9
+
+        if not self.corner_gate_autocenter_enabled:
+            self.corner_gate_active = False
+            self.corner_gate_candidate_since = None
+            self.corner_gate_reason = 'gate_disabled'
+            return
+
+        condition_met = self.is_corner_gate_condition_met()
+
+        if condition_met:
+            if self.corner_gate_candidate_since is None:
+                self.corner_gate_candidate_since = now
+
+            elapsed = now - self.corner_gate_candidate_since
+
+            if elapsed >= self.corner_gate_enter_sec:
+                self.corner_gate_active = True
+                self.corner_gate_last_active_time = now
+                self.corner_gate_reason = 'active'
+
+            return
+
+        self.corner_gate_candidate_since = None
+
+        if not self.corner_gate_active:
+            return
+
+        # 条件が一瞬だけ外れても, 少しだけ重さを維持する.
+        if now - self.corner_gate_last_active_time <= self.corner_gate_hold_sec:
+            self.corner_gate_reason = 'hold'
+            return
+
+        self.corner_gate_active = False
+
+    def calculate_corner_autocenter(self):
+        """
+        カーブ状態に応じて手動中のAutocenter値を決める.
+        """
+        self.corner_autocenter = int(self.manual_autocenter)
+
+        if not self.manual_active:
+            return self.corner_autocenter
+
+        if self.corner_gate_autocenter_enabled:
+            self.update_corner_gate_state()
+
+            if self.corner_gate_active:
+                self.corner_autocenter = int(
+                    self.corner_gate_autocenter
+                )
+                return self.corner_autocenter
+
+            return self.corner_autocenter
+
+        if not self.corner_autocenter_enabled:
+            return self.corner_autocenter
+
+        if self.corner_load_rate <= self.corner_autocenter_min_rate:
+            return self.corner_autocenter
+
+        rate = (
+            self.corner_load_rate
+            - self.corner_autocenter_min_rate
+        ) / (
+            1.0 - self.corner_autocenter_min_rate
+        )
+
+        rate = max(
+            0.0,
+            min(1.0, rate)
+        )
+
+        target_autocenter = (
+            self.manual_autocenter
+            + (self.corner_autocenter_max - self.manual_autocenter)
+            * rate
+        )
+
+        target_autocenter = max(
+            0,
+            min(100, int(round(target_autocenter)))
+        )
+
+        self.corner_autocenter = target_autocenter
+        return self.corner_autocenter
+
+    def update_manual_autocenter(self):
+        """
+        手動中だけカーブ負荷に応じてAutocenterを変更する.
+        """
+        if not self.manual_active:
+            self.corner_autocenter = int(self.manual_autocenter)
+            self.corner_gate_active = False
+            self.corner_gate_candidate_since = None
+            return
+
+        target_autocenter = self.calculate_corner_autocenter()
+
+        if self.current_autocenter is None:
+            self.apply_autocenter(target_autocenter)
+            return
+
+        # カーブが終わったら基本値へ確実に戻す.
+        if (
+            target_autocenter == self.manual_autocenter
+            and self.current_autocenter != self.manual_autocenter
+        ):
+            self.apply_autocenter(target_autocenter)
+            return
+
+        # 小さな変化ではffsetを連発しない.
+        if (
+            abs(target_autocenter - self.current_autocenter)
+            >= self.corner_autocenter_update_threshold
+        ):
+            self.apply_autocenter(target_autocenter)
+
     '''
     Spring更新処理
     '''
@@ -770,6 +1550,9 @@ class FfbFollowNode(Node):
                 f'Autocenter={self.idle_autocenter}'
             )
 
+        # 手動中はカーブ負荷に応じてAutocenterを変える.
+        self.update_manual_autocenter()
+
         # 手動操作中は物理中心へ戻る反力を与える
         if self.manual_active:
             desired_center = 0
@@ -787,6 +1570,17 @@ class FfbFollowNode(Node):
             desired_center = 0
             desired_coeff = self.idle_spring_coeff
             desired_saturation = self.idle_spring_saturation
+
+        desired_coeff, desired_saturation = (
+            self.apply_corner_load_feedback(
+                desired_coeff,
+                desired_saturation
+            )
+        )
+
+        desired_center = self.apply_corner_center_shift(
+            desired_center
+        )
 
         # Spring中心を目標へ少しずつ移動する
         self.applied_center = self.move_toward(
@@ -970,6 +1764,101 @@ class FfbFollowNode(Node):
             )
             return False
 
+    """
+    Damperエフェクト
+    """
+    def make_damper_effect(self, effect_id=-1):
+        # ハンドルを動かす速さに対して抵抗を与える.
+        
+        condition = ff.Condition(
+            int(self.damper_saturation),
+            int(self.damper_saturation),
+            int(self.damper_coeff),
+            int(self.damper_coeff),
+            int(self.damper_deadband),
+            0
+        )
+
+        return ff.Effect(
+            ecodes.FF_DAMPER,
+            effect_id,
+            0,
+            ff.Trigger(0, 0),
+            ff.Replay(self.spring_replay_ms, 0),
+            ff.EffectType(
+                ff_condition_effect=(condition, condition)
+            )
+        )
+
+    def play_damper(self):
+        # Damperを再生する.
+        
+        if not self.damper_enabled:
+            return False
+
+        try:
+            if self.damper_effect_id is None:
+                effect = self.make_damper_effect(
+                    effect_id=-1
+                )
+
+                self.damper_effect_id = self.dev.upload_effect(
+                    effect
+                )
+
+                self.dev.write(
+                    ecodes.EV_FF,
+                    self.damper_effect_id,
+                    1
+                )
+
+                self.get_logger().info(
+                    'Damper effect started.'
+                )
+
+            else:
+                effect = self.make_damper_effect(
+                    effect_id=self.damper_effect_id
+                )
+
+                updated_id = self.dev.upload_effect(effect)
+
+                if updated_id is not None:
+                    self.damper_effect_id = updated_id
+
+            return True
+
+        except Exception as e:
+            self.get_logger().warn(
+                f'Failed to update damper: {e}'
+            )
+            return False
+
+    def stop_damper(self):
+        # 現在再生中のDamperエフェクトを停止・削除する.
+        
+        if self.damper_effect_id is None:
+            return
+
+        try:
+            self.dev.write(
+                ecodes.EV_FF,
+                self.damper_effect_id,
+                0
+            )
+
+            self.dev.erase_effect(
+                self.damper_effect_id
+            )
+
+        except Exception as e:
+            self.get_logger().warn(
+                f'Failed to stop damper: {e}'
+            )
+
+        finally:
+            self.damper_effect_id = None
+    
     def stop_spring(self):
         # 現在再生中のSpringエフェクトを停止・削除する.
         
@@ -1036,6 +1925,7 @@ class FfbFollowNode(Node):
         #Springを止めて,通常のセンタリング力を戻す.
         
         self.stop_spring()
+        self.stop_damper()
 
         self.set_autocenter(
             self.shutdown_autocenter

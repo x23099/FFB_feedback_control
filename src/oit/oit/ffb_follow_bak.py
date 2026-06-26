@@ -8,7 +8,7 @@ from rclpy.node import Node
 
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Float32, Int32, String
 
 from evdev import InputDevice, ecodes, ff
 
@@ -202,6 +202,27 @@ class FfbFollowNode(Node):
             'spring_replay_ms',
             30000
         )
+        
+                # Damper
+        self.declare_parameter(
+            'damper_enabled',
+            False
+        )
+
+        self.declare_parameter(
+            'damper_coeff',
+            2500
+        )
+
+        self.declare_parameter(
+            'damper_saturation',
+            6000
+        )
+
+        self.declare_parameter(
+            'damper_deadband',
+            0
+        )
     
     def load_ros_parameters(self):
         """
@@ -350,6 +371,23 @@ class FfbFollowNode(Node):
         self.spring_replay_ms = int(
             self.get_parameter('spring_replay_ms').value
         )
+        
+        # Damper
+        self.damper_enabled = bool(
+            self.get_parameter('damper_enabled').value
+        )
+
+        self.damper_coeff = int(
+            self.get_parameter('damper_coeff').value
+        )
+
+        self.damper_saturation = int(
+            self.get_parameter('damper_saturation').value
+        )
+
+        self.damper_deadband = int(
+            self.get_parameter('damper_deadband').value
+        )
 
         # FF_SPRINGのcenter値上限
         self.spring_center_limit = 32767
@@ -365,6 +403,18 @@ class FfbFollowNode(Node):
 
         # 現在のKobuki yaw角[rad]
         self.current_yaw = 0.0
+        
+        # 前回のyaw.
+        self.previous_yaw = None
+
+        # 折り返し補正済みの累積yaw[rad].
+        self.accumulated_yaw = 0.0
+
+        # 自律旋回開始時の累積yaw[rad].
+        self.auto_start_accumulated_yaw = 0.0
+
+        # FFB計算用のyaw差分[deg].
+        self.yaw_delta_deg = 0.0
 
         # /odomを受信したか
         self.odom_received = False
@@ -398,6 +448,9 @@ class FfbFollowNode(Node):
 
         # 現在登録しているSpringエフェクトID
         self.spring_effect_id = None
+        
+        # 現在登録しているDamperエフェクトID
+        self.damper_effect_id = None
 
         # 最後に送信したSpring設定
         self.last_sent_center = None
@@ -421,6 +474,9 @@ class FfbFollowNode(Node):
         self.apply_autocenter(
             self.idle_autocenter
         )
+        
+        if self.damper_enabled:
+            self.play_damper()
     
     def initialize_ros_interfaces(self):
         """
@@ -448,6 +504,55 @@ class FfbFollowNode(Node):
             Bool,
             self.manual_active_topic,
             self.manual_active_callback,
+            10
+        )
+
+        # FFB状態をpublishする.
+        self.ffb_mode_pub = self.create_publisher(
+            String,
+            '/ffb/mode',
+            10
+        )
+
+        self.yaw_delta_deg_pub = self.create_publisher(
+            Float32,
+            '/ffb/yaw_delta_deg',
+            10
+        )
+
+        self.target_handle_deg_pub = self.create_publisher(
+            Float32,
+            '/ffb/target_handle_deg',
+            10
+        )
+
+        self.auto_target_center_pub = self.create_publisher(
+            Int32,
+            '/ffb/auto_target_center',
+            10
+        )
+
+        self.applied_center_pub = self.create_publisher(
+            Int32,
+            '/ffb/applied_center',
+            10
+        )
+
+        self.autocenter_pub = self.create_publisher(
+            Int32,
+            '/ffb/autocenter',
+            10
+        )
+
+        self.spring_coeff_pub = self.create_publisher(
+            Int32,
+            '/ffb/spring_coeff',
+            10
+        )
+
+        self.spring_saturation_pub = self.create_publisher(
+            Int32,
+            '/ffb/spring_saturation',
             10
         )
 
@@ -505,11 +610,11 @@ class FfbFollowNode(Node):
     '''
     def auto_cmd_callback(self, msg):
         # /cmd_vel_autoから自律旋回中かどうかを判定する.
-        # 手動介入中は自律走行の旋回をFFBへ反映しない
+        # 手動介入中は自律走行の旋回をFFBへ反映しない.
         if self.manual_active:
             return
 
-        # odom受信前は旋回を開始しない
+        # odom受信前は旋回を開始しない.
         if not self.odom_received:
             return
 
@@ -521,64 +626,88 @@ class FfbFollowNode(Node):
         now = self.get_clock().now().nanoseconds / 1e9
         self.last_auto_cmd_time = now
 
-        # すでに旋回中なら,開始yawはそのまま
+        # すでに旋回中なら, 開始位置はそのまま.
         if not self.auto_turning:
             self.auto_turning = True
 
-            # 自律追従中はSpring中心の移動を優先する
+            # 自律追従中はSpring中心の移動を優先する.
             self.apply_autocenter(self.auto_autocenter)
 
-            self.turn_start_yaw = self.current_yaw
+            # 旋回開始時の累積yawを保存する.
+            self.auto_start_accumulated_yaw = self.accumulated_yaw
+
+            self.yaw_delta_deg = 0.0
             self.target_handle_deg = 0.0
             self.auto_target_center = 0
 
             self.get_logger().info(
                 f'Auto turn started. '
-                f'start_yaw={math.degrees(self.turn_start_yaw):.1f}deg'
+                f'start_accumulated_yaw='
+                f'{math.degrees(self.auto_start_accumulated_yaw):.1f}deg'
             )
 
     def odom_callback(self, msg):
-        # /odomからKobukiのyaw角を取得する.
-        self.current_yaw = self.quaternion_to_yaw(
-            msg.pose.pose.orientation
+        """
+        odomからyawを取得し, 累積yawを更新する.
+        """
+        orientation = msg.pose.pose.orientation
+
+        current_yaw = self.quaternion_to_yaw(
+            orientation
         )
+
+        self.current_yaw = current_yaw
         self.odom_received = True
 
-        # 人間が操作中は自律走行の目標Spring中心を更新しない
-        if self.manual_active:
+        # 初回だけ前回yawを初期化する.
+        if self.previous_yaw is None:
+            self.previous_yaw = current_yaw
+            self.accumulated_yaw = 0.0
             return
 
+        # 前回から今回までのyaw変化量だけを正規化する.
+        yaw_step = self.normalize_angle(
+            current_yaw - self.previous_yaw
+        )
+
+        # yawの折り返しをまたいでも累積角として足す.
+        self.accumulated_yaw += yaw_step
+
+        # 次回計算用に保存する.
+        self.previous_yaw = current_yaw
+
+        # 自律旋回中だけFFB目標角を更新する.
         if not self.auto_turning:
             return
 
-        if self.turn_start_yaw is None:
-            return
-
-        yaw_delta = self.normalize_angle(
-            self.current_yaw - self.turn_start_yaw
+        yaw_delta = (
+            self.accumulated_yaw
+            - self.auto_start_accumulated_yaw
         )
 
-        yaw_delta_deg = math.degrees(yaw_delta)
-
         if self.invert_yaw_sign:
-            yaw_delta_deg = -yaw_delta_deg
+            yaw_delta *= -1.0
 
-        # Kobukiの旋回角をハンドル角へ変換する
+        self.yaw_delta_deg = math.degrees(yaw_delta)
+
         target_handle_deg = (
-            yaw_delta_deg
+            self.yaw_delta_deg
             * self.yaw_to_handle_ratio
         )
 
         target_handle_deg = max(
             -self.handle_limit_deg,
-            min(self.handle_limit_deg, target_handle_deg)
+            min(
+                self.handle_limit_deg,
+                target_handle_deg
+            )
         )
 
         self.target_handle_deg = target_handle_deg
 
-        # 自律走行用の中心値として保存する
+        # 自律走行用のSpring中心値として保存する.
         self.auto_target_center = self.deg_to_spring_center(
-            target_handle_deg
+            self.target_handle_deg
         )
 
     def manual_active_callback(self, msg):
@@ -612,6 +741,54 @@ class FfbFollowNode(Node):
                 'Manual override ended. '
                 f'Autocenter={self.idle_autocenter}'
             )
+
+    """
+    現在のFFBモード名を返す.
+    """
+    def get_ffb_mode(self):
+        if self.manual_active:
+            return 'manual'
+
+        if self.auto_turning:
+            return 'auto'
+
+        return 'idle'
+
+    """
+    FFB内部状態をROSトピックへpublishする.
+    """
+    def publish_ffb_state(self):
+        mode_msg = String()
+        mode_msg.data = self.get_ffb_mode()
+        self.ffb_mode_pub.publish(mode_msg)
+
+        yaw_msg = Float32()
+        yaw_msg.data = float(self.yaw_delta_deg)
+        self.yaw_delta_deg_pub.publish(yaw_msg)
+
+        target_handle_msg = Float32()
+        target_handle_msg.data = float(self.target_handle_deg)
+        self.target_handle_deg_pub.publish(target_handle_msg)
+
+        auto_center_msg = Int32()
+        auto_center_msg.data = int(self.auto_target_center)
+        self.auto_target_center_pub.publish(auto_center_msg)
+
+        applied_center_msg = Int32()
+        applied_center_msg.data = int(self.applied_center)
+        self.applied_center_pub.publish(applied_center_msg)
+
+        autocenter_msg = Int32()
+        autocenter_msg.data = int(self.current_autocenter or 0)
+        self.autocenter_pub.publish(autocenter_msg)
+
+        coeff_msg = Int32()
+        coeff_msg.data = int(self.applied_coeff)
+        self.spring_coeff_pub.publish(coeff_msg)
+
+        saturation_msg = Int32()
+        saturation_msg.data = int(self.applied_saturation)
+        self.spring_saturation_pub.publish(saturation_msg)
 
     '''
     Spring更新処理
@@ -675,6 +852,9 @@ class FfbFollowNode(Node):
             self.saturation_step
         )
 
+        # FFB内部状態をROSトピックへpublishする.
+        self.publish_ffb_state()
+
         # 変化が小さい場合は更新を省略する
         if not self.should_update_spring(now):
             return
@@ -726,12 +906,18 @@ class FfbFollowNode(Node):
         )
 
     def reset_auto_turn(self):
-        # 自律旋回状態を初期化する.
-        
+        """
+        自律旋回状態をリセットする.
+        """
         self.auto_turning = False
-        self.turn_start_yaw = None
+
+        # 次の旋回開始時に現在位置から計測できるようにする.
+        self.auto_start_accumulated_yaw = self.accumulated_yaw
+
+        self.yaw_delta_deg = 0.0
         self.target_handle_deg = 0.0
         self.auto_target_center = 0
+        self.turn_start_yaw = None
 
     @staticmethod
     def move_toward(current, target, step):
@@ -828,6 +1014,101 @@ class FfbFollowNode(Node):
             )
             return False
 
+    """
+    Damperエフェクト
+    """
+    def make_damper_effect(self, effect_id=-1):
+        # ハンドルを動かす速さに対して抵抗を与える.
+        
+        condition = ff.Condition(
+            int(self.damper_saturation),
+            int(self.damper_saturation),
+            int(self.damper_coeff),
+            int(self.damper_coeff),
+            int(self.damper_deadband),
+            0
+        )
+
+        return ff.Effect(
+            ecodes.FF_DAMPER,
+            effect_id,
+            0,
+            ff.Trigger(0, 0),
+            ff.Replay(self.spring_replay_ms, 0),
+            ff.EffectType(
+                ff_condition_effect=(condition, condition)
+            )
+        )
+
+    def play_damper(self):
+        # Damperを再生する.
+        
+        if not self.damper_enabled:
+            return False
+
+        try:
+            if self.damper_effect_id is None:
+                effect = self.make_damper_effect(
+                    effect_id=-1
+                )
+
+                self.damper_effect_id = self.dev.upload_effect(
+                    effect
+                )
+
+                self.dev.write(
+                    ecodes.EV_FF,
+                    self.damper_effect_id,
+                    1
+                )
+
+                self.get_logger().info(
+                    'Damper effect started.'
+                )
+
+            else:
+                effect = self.make_damper_effect(
+                    effect_id=self.damper_effect_id
+                )
+
+                updated_id = self.dev.upload_effect(effect)
+
+                if updated_id is not None:
+                    self.damper_effect_id = updated_id
+
+            return True
+
+        except Exception as e:
+            self.get_logger().warn(
+                f'Failed to update damper: {e}'
+            )
+            return False
+
+    def stop_damper(self):
+        # 現在再生中のDamperエフェクトを停止・削除する.
+        
+        if self.damper_effect_id is None:
+            return
+
+        try:
+            self.dev.write(
+                ecodes.EV_FF,
+                self.damper_effect_id,
+                0
+            )
+
+            self.dev.erase_effect(
+                self.damper_effect_id
+            )
+
+        except Exception as e:
+            self.get_logger().warn(
+                f'Failed to stop damper: {e}'
+            )
+
+        finally:
+            self.damper_effect_id = None
+    
     def stop_spring(self):
         # 現在再生中のSpringエフェクトを停止・削除する.
         
@@ -894,6 +1175,7 @@ class FfbFollowNode(Node):
         #Springを止めて,通常のセンタリング力を戻す.
         
         self.stop_spring()
+        self.stop_damper()
 
         self.set_autocenter(
             self.shutdown_autocenter

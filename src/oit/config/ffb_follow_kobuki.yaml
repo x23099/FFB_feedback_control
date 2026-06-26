@@ -6,6 +6,8 @@ ffb_follow_node:
     auto_cmd_topic: /cmd_vel_auto
     odom_topic: /odom
     manual_active_topic: /handle/manual_active
+    gear_topic: /handle/gear
+    steering_norm_topic: /handle/steering_norm
 
     # G923デバイス
     device_path: /dev/input/by-id/usb-Logitech_G923_Racing_Wheel_for_PlayStation_4_and_PC_USYMUGUXEREJOFORUFUMEZIDU-event-joystick
@@ -27,29 +29,69 @@ ffb_follow_node:
     auto_cmd_timeout: 0.3
 
     # 自律旋回中のSpring
-    auto_spring_coeff: 15000       # 0x4900 
-    auto_spring_saturation: 22000  # 0x6000
+    auto_spring_coeff: 15000
+    auto_spring_saturation: 22000
 
     # 手動操作中のSpring
-    manual_spring_coeff: 13500 # 18688yatta
-    manual_spring_saturation: 20000 # 24576
+    manual_spring_coeff: 13500
+    manual_spring_saturation: 20000
 
     # 待機中のSpring
-    idle_spring_coeff: 13500       # 0x3000
-    idle_spring_saturation: 20000  # 0x4800
+    idle_spring_coeff: 13500
+    idle_spring_saturation: 20000
 
     # Spring共通設定
     spring_deadband: 0
     spring_replay_ms: 30000
 
     # Spring更新
-    max_center_step: 150 # 400yatta
-    coeff_step: 512               # 0x0200
-    saturation_step: 512          # 0x0200
+    max_center_step: 150
+    coeff_step: 512
+    saturation_step: 512
 
-    center_send_threshold: 5 # 20yatta
-    coeff_send_threshold: 128     # 0x0080
+    center_send_threshold: 5
+    coeff_send_threshold: 128
     saturation_send_threshold: 128
 
-    effect_refresh_sec: 0.5 # 1.0yatta
-    spring_update_period: 0.01 # 0.05yatta
+    effect_refresh_sec: 0.5
+    spring_update_period: 0.01
+
+    # Damper
+    damper_enabled: false
+    damper_coeff: 2500
+    damper_saturation: 6000
+    damper_deadband: 0
+
+    # カーブ負荷FFB
+    corner_load_enabled: true
+    corner_load_reference: 0.20
+    corner_load_min_speed: 0.10
+    corner_load_coeff_gain: 0
+    corner_load_saturation_gain: 0
+    corner_load_filter_alpha: 0.35
+
+
+    # カーブ負荷による中心ずらしFFB
+    corner_center_shift_enabled: false
+    corner_center_shift_max_deg: 45.0
+    corner_center_shift_min_rate: 0.10
+    corner_center_shift_direction: -1.0
+
+
+    # カーブ負荷によるAutocenter補正
+    # gate方式がONのときは予備機能として残す.
+    corner_autocenter_enabled: true
+    corner_autocenter_min_rate: 0.10
+    corner_autocenter_max: 90
+    corner_autocenter_update_threshold: 5
+
+    # 高ギアカーブ時だけAutocenterを強くする.
+    corner_gate_autocenter_enabled: true
+    corner_gate_min_gear: 4
+    corner_gate_min_speed: 0.45
+    corner_gate_min_angular: 0.35
+    corner_gate_min_steering_norm: 0.20
+    corner_gate_min_load_rate: 0.25
+    corner_gate_enter_sec: 0.15
+    corner_gate_hold_sec: 0.50
+    corner_gate_autocenter: 80

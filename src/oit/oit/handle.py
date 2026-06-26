@@ -11,10 +11,9 @@ import rclpy
 from rclpy.node import Node
 
 from geometry_msgs.msg import Twist
-from std_msgs.msg import Float32, Int32
+from std_msgs.msg import Bool, Float32, Int32, String
 
 from evdev import InputDevice, ecodes
-from std_msgs.msg import Bool
 
 
 class HandleNode(Node):
@@ -36,6 +35,9 @@ class HandleNode(Node):
         
         # 現在のギア情報.
         self.gear_pub = self.create_publisher(Int32, '/handle/gear', 10)
+
+        # 現在の走行モードをUI側へ通知する.
+        self.drive_mode_pub = self.create_publisher(String, '/handle/drive_mode', 10)
 
         # G923のLED制御用hidraw.
         self.led_hidraw_path = '/dev/g923_led'
@@ -97,6 +99,10 @@ class HandleNode(Node):
         # モード切り替えボタン.
         self.mode_switch_code = 712
 
+        # モード切り替えの連打防止.
+        self.last_mode_switch_time = 0.0
+        self.mode_switch_debounce_sec = 0.30
+
         # パドルのイベントコード.
         # evtestで確認した値へ変更する.
         self.paddle_up_code = 292
@@ -147,6 +153,33 @@ class HandleNode(Node):
 
         # 残りのゼロ指令送信回数.
         self.stop_publish_remaining = 0
+        
+        # 旋回時の速度制限設定.
+        self.corner_speed_limit_enabled = False
+        
+        # 高速時のステア感度補正.
+        self.high_speed_steering_boost_enabled = True
+
+        # この速度を超えたらステア補正を始める.
+        self.high_speed_boost_start_linear = 0.45
+
+        # この速度でステア補正を最大にする.
+        self.high_speed_boost_full_linear = 0.90
+
+        # 高速時にangular.zを最大何倍まで増やすか.
+        self.high_speed_angular_boost = 1.5
+
+        # 高速時のangular.z上限.
+        self.high_speed_max_angular = 4.0
+
+        # このステア量を超えたら速度制限を始める.
+        self.corner_speed_start = 0.15
+
+        # 全切り時に残す最低速度倍率.
+        self.corner_min_speed_scale = 0.45
+
+        # 速度制限の強さ.
+        self.corner_speed_reduction = 0.55
 
         # ===== G923を開く =====
 
@@ -204,6 +237,9 @@ class HandleNode(Node):
         # 20Hzで現在状態をpublishし続ける
         self.publish_period = 0.05
         self.create_timer(self.publish_period, self.publish_loop)
+
+        # 起動直後の走行モードを通知する.
+        self.publish_drive_mode()
 
         self.get_logger().info('handle.py started.')
 
@@ -266,6 +302,11 @@ class HandleNode(Node):
                     continue
 
                 for event in self.g923.read():
+                    # プレステマークは環境によってtypeやvalueが変わることがあるため, code 712を最優先で拾う.
+                    if event.code == self.mode_switch_code:
+                        self.handle_mode_switch_event(event)
+                        continue
+
                     if event.type == ecodes.EV_ABS:
                         self.handle_abs_event(event)
 
@@ -278,7 +319,32 @@ class HandleNode(Node):
             except Exception as e:
                 self.get_logger().error(f'Input error: {e}')
 
-    def calculate_angular_command(self):
+    def handle_mode_switch_event(self, event):
+        """
+        プレステマークでMT/ATを切り替える.
+        eventcode 712を検出したら, typeに関係なく処理する.
+        """
+        # 離したイベントでは切り替えない.
+        if event.value == 0:
+            return
+
+        now = time.time()
+
+        # 長押しや連続イベントで何度も切り替わるのを防ぐ.
+        if now - self.last_mode_switch_time < self.mode_switch_debounce_sec:
+            return
+
+        self.last_mode_switch_time = now
+
+        self.get_logger().info(
+            f'Mode switch button detected: '
+            f'type={event.type}, code={event.code}, value={event.value}'
+        )
+
+        self.toggle_drive_mode()
+
+
+    def calculate_angular_command(self, linear_x=0.0):
         """
         ハンドル角度から汎用的な旋回角速度angular.zを計算する.
 
@@ -309,8 +375,16 @@ class HandleNode(Node):
         # ハンドルの左右方向を反映する.
         angular = math.copysign(angular, steering_deg)
 
-        # ROSでは通常、右旋回がangular.zのマイナスになるため反転する.
-        return -angular
+        # ROSでは通常, 右旋回がangular.zのマイナスになるため反転する.
+        angular = -angular
+
+        # 高速走行時は旋回角速度を強くする.
+        angular = self.apply_high_speed_steering_boost(
+            angular,
+            linear_x
+        )
+
+        return angular
 
     def handle_abs_event(self, event):
         """
@@ -364,7 +438,7 @@ class HandleNode(Node):
         pressed = event.value == 1
         released = event.value == 0
 
-        # 712を押したときにMTとATを切り替える.
+        # プレステマーク, eventcode 712を押したときにMTとATを切り替える.
         if code == self.mode_switch_code and pressed:
             self.toggle_drive_mode()
             return
@@ -409,10 +483,62 @@ class HandleNode(Node):
             self.stop_publish_cycles
         )
 
+        self.publish_drive_mode()
+
         self.get_logger().info(
             f'Drive mode changed: {self.drive_mode}'
         )
 
+
+    def publish_drive_mode(self):
+        """
+        現在の走行モードをUI側へpublishする.
+        """
+        mode_msg = String()
+        mode_msg.data = self.drive_mode
+        self.drive_mode_pub.publish(mode_msg)
+
+    
+    def apply_high_speed_steering_boost(self, angular_z, linear_x):
+        """
+        高速走行時に旋回角速度を強くする.
+        """
+        if not self.high_speed_steering_boost_enabled:
+            return angular_z
+
+        speed = abs(linear_x)
+
+        if speed <= self.high_speed_boost_start_linear:
+            return angular_z
+
+        speed_rate = (
+            speed - self.high_speed_boost_start_linear
+        ) / (
+            self.high_speed_boost_full_linear
+            - self.high_speed_boost_start_linear
+        )
+
+        speed_rate = max(
+            0.0,
+            min(1.0, speed_rate)
+        )
+
+        boost = 1.0 + (
+            self.high_speed_angular_boost
+            * speed_rate
+        )
+
+        boosted_angular = angular_z * boost
+
+        boosted_angular = max(
+            -self.high_speed_max_angular,
+            min(
+                self.high_speed_max_angular,
+                boosted_angular
+            )
+        )
+
+        return boosted_angular
     
     def send_led_mask(self, mask):
         """
@@ -681,6 +807,9 @@ class HandleNode(Node):
         gear_msg.data = int(self.gear)
         self.gear_pub.publish(gear_msg)
 
+        # 走行モードをpublish.
+        self.publish_drive_mode()
+
         # アクセルかブレーキ操作中を手動操作として扱う.
         manual_active = (
             self.throttle_norm > self.throttle_threshold
@@ -714,9 +843,10 @@ class HandleNode(Node):
                     * self.linear_gain
                 )
 
-                # ハンドル角度から旋回角速度を作る.
-                angular_command = self.calculate_angular_command()
-
+                # ハンドル角度と速度から旋回角速度を作る.
+                angular_command = self.calculate_angular_command(
+                    twist.linear.x
+                )
                 # 後退時は操舵方向を反転する.
                 if self.linear_gain < 0:
                     twist.angular.z = -angular_command
