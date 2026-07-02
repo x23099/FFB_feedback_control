@@ -5,9 +5,11 @@ import subprocess
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import Imu
 from std_msgs.msg import Bool, Float32, Int32, String
 
 from evdev import InputDevice, ecodes, ff
@@ -64,6 +66,11 @@ class FfbFollowNode(Node):
         self.declare_parameter(
             'steering_norm_topic',
             '/handle/steering_norm'
+        )
+
+        self.declare_parameter(
+            'imu_topic',
+            '/sensors/imu_data_raw'
         )
 
         # G923デバイス
@@ -234,6 +241,182 @@ class FfbFollowNode(Node):
             0
         )
 
+        # 段差振動FFB
+        self.declare_parameter(
+            'bump_feedback_enabled',
+            False
+        )
+
+        self.declare_parameter(
+            'bump_angular_threshold',
+            0.18
+        )
+
+        self.declare_parameter(
+            'bump_angular_full_scale',
+            0.55
+        )
+
+        self.declare_parameter(
+            'bump_min_interval_sec',
+            0.25
+        )
+
+        self.declare_parameter(
+            'bump_cooldown_override_rate',
+            0.60
+        )
+
+        self.declare_parameter(
+            'bump_min_speed',
+            0.03
+        )
+
+        self.declare_parameter(
+            'bump_rumble_duration_ms',
+            120
+        )
+
+        self.declare_parameter(
+            'bump_rumble_enabled',
+            False
+        )
+
+        self.declare_parameter(
+            'bump_rumble_weak_min',
+            0x1000
+        )
+
+        self.declare_parameter(
+            'bump_rumble_weak_max',
+            0x4600
+        )
+
+        self.declare_parameter(
+            'bump_rumble_strong_min',
+            0x3000
+        )
+
+        self.declare_parameter(
+            'bump_rumble_strong_max',
+            0x7fff
+        )
+
+        self.declare_parameter(
+            'bump_center_kick_enabled',
+            True
+        )
+
+        self.declare_parameter(
+            'bump_center_kick_min_deg',
+            6.0
+        )
+
+        self.declare_parameter(
+            'bump_center_kick_max_deg',
+            28.0
+        )
+
+        self.declare_parameter(
+            'bump_center_kick_duration_sec',
+            0.22
+        )
+
+        self.declare_parameter(
+            'bump_center_kick_frequency_hz',
+            18.0
+        )
+
+        self.declare_parameter(
+            'bump_center_kick_coeff',
+            28000
+        )
+
+        self.declare_parameter(
+            'bump_center_kick_saturation',
+            32000
+        )
+
+        self.declare_parameter(
+            'bump_constant_kick_enabled',
+            True
+        )
+
+        self.declare_parameter(
+            'bump_constant_min_level',
+            9000
+        )
+
+        self.declare_parameter(
+            'bump_constant_max_level',
+            24000
+        )
+
+        self.declare_parameter(
+            'bump_constant_pulse_ms',
+            45
+        )
+
+        self.declare_parameter(
+            'bump_constant_second_delay_sec',
+            0.055
+        )
+
+        self.declare_parameter(
+            'bump_periodic_enabled',
+            True
+        )
+
+        self.declare_parameter(
+            'bump_periodic_preload_enabled',
+            True
+        )
+
+        self.declare_parameter(
+            'bump_periodic_min_magnitude',
+            12000
+        )
+
+        self.declare_parameter(
+            'bump_periodic_max_magnitude',
+            32767
+        )
+
+        self.declare_parameter(
+            'bump_periodic_period_ms',
+            35
+        )
+
+        self.declare_parameter(
+            'bump_periodic_duration_ms',
+            120
+        )
+
+        self.declare_parameter(
+            'bump_periodic_direction',
+            0x4000
+        )
+
+        self.declare_parameter(
+            'bump_angular_z_weight',
+            0.6
+        )
+
+        self.declare_parameter(
+            'bump_angular_delta_weight',
+            0.7
+        )
+
+        self.declare_parameter(
+            'bump_debug_enabled',
+            True
+        )
+
+        self.declare_parameter(
+            'bump_debug_period_sec',
+            1.0
+        )
+
         # カーブ負荷FFB
         self.declare_parameter(
             'corner_load_enabled',
@@ -377,6 +560,10 @@ class FfbFollowNode(Node):
 
         self.steering_norm_topic = str(
             self.get_parameter('steering_norm_topic').value
+        )
+
+        self.imu_topic = str(
+            self.get_parameter('imu_topic').value
         )
 
         # G923デバイス
@@ -524,6 +711,157 @@ class FfbFollowNode(Node):
 
         self.damper_deadband = int(
             self.get_parameter('damper_deadband').value
+        )
+
+        # 段差振動FFB
+        self.bump_feedback_enabled = bool(
+            self.get_parameter('bump_feedback_enabled').value
+        )
+
+        self.bump_angular_threshold = float(
+            self.get_parameter('bump_angular_threshold').value
+        )
+
+        self.bump_angular_full_scale = float(
+            self.get_parameter('bump_angular_full_scale').value
+        )
+
+        self.bump_min_interval_sec = float(
+            self.get_parameter('bump_min_interval_sec').value
+        )
+
+        self.bump_cooldown_override_rate = float(
+            self.get_parameter('bump_cooldown_override_rate').value
+        )
+
+        self.bump_min_speed = float(
+            self.get_parameter('bump_min_speed').value
+        )
+
+        self.bump_rumble_duration_ms = int(
+            self.get_parameter('bump_rumble_duration_ms').value
+        )
+
+        self.bump_rumble_enabled = bool(
+            self.get_parameter('bump_rumble_enabled').value
+        )
+
+        self.bump_rumble_weak_min = int(
+            self.get_parameter('bump_rumble_weak_min').value
+        )
+
+        self.bump_rumble_weak_max = int(
+            self.get_parameter('bump_rumble_weak_max').value
+        )
+
+        self.bump_rumble_strong_min = int(
+            self.get_parameter('bump_rumble_strong_min').value
+        )
+
+        self.bump_rumble_strong_max = int(
+            self.get_parameter('bump_rumble_strong_max').value
+        )
+
+        self.bump_center_kick_enabled = bool(
+            self.get_parameter('bump_center_kick_enabled').value
+        )
+
+        self.bump_center_kick_min_deg = float(
+            self.get_parameter('bump_center_kick_min_deg').value
+        )
+
+        self.bump_center_kick_max_deg = float(
+            self.get_parameter('bump_center_kick_max_deg').value
+        )
+
+        self.bump_center_kick_duration_sec = float(
+            self.get_parameter(
+                'bump_center_kick_duration_sec'
+            ).value
+        )
+
+        self.bump_center_kick_frequency_hz = float(
+            self.get_parameter(
+                'bump_center_kick_frequency_hz'
+            ).value
+        )
+
+        self.bump_center_kick_coeff = int(
+            self.get_parameter('bump_center_kick_coeff').value
+        )
+
+        self.bump_center_kick_saturation = int(
+            self.get_parameter(
+                'bump_center_kick_saturation'
+            ).value
+        )
+
+        self.bump_constant_kick_enabled = bool(
+            self.get_parameter('bump_constant_kick_enabled').value
+        )
+
+        self.bump_constant_min_level = int(
+            self.get_parameter('bump_constant_min_level').value
+        )
+
+        self.bump_constant_max_level = int(
+            self.get_parameter('bump_constant_max_level').value
+        )
+
+        self.bump_constant_pulse_ms = int(
+            self.get_parameter('bump_constant_pulse_ms').value
+        )
+
+        self.bump_constant_second_delay_sec = float(
+            self.get_parameter(
+                'bump_constant_second_delay_sec'
+            ).value
+        )
+
+        self.bump_periodic_enabled = bool(
+            self.get_parameter('bump_periodic_enabled').value
+        )
+
+        self.bump_periodic_preload_enabled = bool(
+            self.get_parameter(
+                'bump_periodic_preload_enabled'
+            ).value
+        )
+
+        self.bump_periodic_min_magnitude = int(
+            self.get_parameter('bump_periodic_min_magnitude').value
+        )
+
+        self.bump_periodic_max_magnitude = int(
+            self.get_parameter('bump_periodic_max_magnitude').value
+        )
+
+        self.bump_periodic_period_ms = int(
+            self.get_parameter('bump_periodic_period_ms').value
+        )
+
+        self.bump_periodic_duration_ms = int(
+            self.get_parameter('bump_periodic_duration_ms').value
+        )
+
+        self.bump_periodic_direction = int(
+            self.get_parameter('bump_periodic_direction').value
+        )
+
+        self.bump_angular_z_weight = float(
+            self.get_parameter('bump_angular_z_weight').value
+        )
+
+        self.bump_angular_delta_weight = float(
+            self.get_parameter('bump_angular_delta_weight').value
+        )
+
+        self.bump_debug_enabled = bool(
+            self.get_parameter('bump_debug_enabled').value
+        )
+
+        self.bump_debug_period_sec = float(
+            self.get_parameter('bump_debug_period_sec').value
         )
 
         # カーブ負荷FFB
@@ -711,6 +1049,35 @@ class FfbFollowNode(Node):
         # 現在登録しているDamperエフェクトID
         self.damper_effect_id = None
 
+        # 現在登録している段差RumbleエフェクトID.
+        self.bump_effect_id = None
+
+        # 現在登録している段差ConstantエフェクトID.
+        self.bump_constant_effect_id = None
+
+        # 現在登録している段差PeriodicエフェクトID.
+        self.bump_periodic_effect_id = None
+
+        # 最後に段差振動を出した時刻.
+        self.last_bump_time = 0.0
+
+        # 前回のIMU角速度.
+        self.previous_imu_angular = None
+
+        # 段差検出値の診断用.
+        self.bump_debug_last_log_time = 0.0
+        self.bump_debug_max_rate = 0.0
+        self.bump_debug_last_speed = 0.0
+
+        # 段差Constantキックの2発目管理.
+        self.bump_constant_second_due_time = 0.0
+        self.bump_constant_second_level = 0
+
+        # 段差時にSpring中心を短時間だけ揺らす状態.
+        self.bump_kick_start_time = 0.0
+        self.bump_kick_until_time = 0.0
+        self.bump_kick_peak_center = 0
+
         # odomから取得した走行速度[m/s].
         self.odom_linear_x = 0.0
 
@@ -766,6 +1133,8 @@ class FfbFollowNode(Node):
         
         if self.damper_enabled:
             self.play_damper()
+
+        self.prepare_bump_periodic_effect()
     
     def initialize_ros_interfaces(self):
         """
@@ -811,6 +1180,19 @@ class FfbFollowNode(Node):
             self.steering_norm_callback,
             10
         )
+
+        if self.bump_feedback_enabled:
+            imu_qos = QoSProfile(
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+                reliability=ReliabilityPolicy.BEST_EFFORT
+            )
+            self.create_subscription(
+                Imu,
+                self.imu_topic,
+                self.imu_callback,
+                imu_qos
+            )
 
         # FFB状態をpublishする.
         self.ffb_mode_pub = self.create_publisher(
@@ -1092,6 +1474,90 @@ class FfbFollowNode(Node):
     def steering_norm_callback(self, msg):
         # handle.pyからステアリング入力を受け取る.
         self.steering_norm = float(msg.data)
+
+    def imu_callback(self, msg):
+        """
+        KobukiのIMU角速度から段差乗り越え時の揺れを検出する.
+        """
+        if not self.bump_feedback_enabled:
+            return
+
+        angular_x = float(msg.angular_velocity.x)
+        angular_y = float(msg.angular_velocity.y)
+        angular_z = float(msg.angular_velocity.z)
+
+        angular_delta = 0.0
+        if self.previous_imu_angular is not None:
+            prev_x, prev_y, prev_z = self.previous_imu_angular
+            angular_delta = math.sqrt(
+                (angular_x - prev_x) ** 2
+                + (angular_y - prev_y) ** 2
+                + (angular_z - prev_z) ** 2
+            )
+
+        self.previous_imu_angular = (
+            angular_x,
+            angular_y,
+            angular_z
+        )
+
+        bump_rate = (
+            math.hypot(angular_x, angular_y)
+            + abs(angular_z) * self.bump_angular_z_weight
+            + angular_delta * self.bump_angular_delta_weight
+        )
+
+        now = self.get_clock().now().nanoseconds / 1e9
+        self.update_bump_debug(
+            bump_rate,
+            abs(self.odom_linear_x),
+            now
+        )
+
+        if abs(self.odom_linear_x) < self.bump_min_speed:
+            return
+
+        if bump_rate < self.bump_angular_threshold:
+            return
+
+        if (
+            now - self.last_bump_time < self.bump_min_interval_sec
+            and bump_rate < self.bump_cooldown_override_rate
+        ):
+            return
+
+        self.last_bump_time = now
+        self.play_bump_periodic(bump_rate)
+        self.play_bump_constant_kick(bump_rate, angular_x, now)
+        self.trigger_bump_center_kick(bump_rate, now)
+        self.play_bump_rumble(bump_rate)
+
+    def update_bump_debug(self, bump_rate, speed, now):
+        # 段差検出値がしきい値に届いているか確認するためのログ.
+        if not self.bump_debug_enabled:
+            return
+
+        self.bump_debug_max_rate = max(
+            self.bump_debug_max_rate,
+            bump_rate
+        )
+        self.bump_debug_last_speed = speed
+
+        if (
+            now - self.bump_debug_last_log_time
+            < self.bump_debug_period_sec
+        ):
+            return
+
+        self.bump_debug_last_log_time = now
+
+        self.get_logger().info(
+            f'Bump debug: max_rate={self.bump_debug_max_rate:.3f}, '
+            f'threshold={self.bump_angular_threshold:.3f}, '
+            f'speed={self.bump_debug_last_speed:.3f}, '
+            f'min_speed={self.bump_min_speed:.3f}'
+        )
+        self.bump_debug_max_rate = 0.0
 
     def manual_active_callback(self, msg):
         # handle.pyから手動介入状態を受け取る.
@@ -1534,6 +2000,8 @@ class FfbFollowNode(Node):
         
         now = self.get_clock().now().nanoseconds / 1e9
 
+        self.update_bump_constant_second_pulse(now)
+
         # 旋回指令が一定時間来なければ,自律旋回終了と判断する
         if (
             self.auto_turning
@@ -1602,6 +2070,21 @@ class FfbFollowNode(Node):
             self.saturation_step
         )
 
+        if now < self.bump_kick_until_time:
+            self.applied_coeff = max(
+                self.applied_coeff,
+                self.bump_center_kick_coeff
+            )
+            self.applied_saturation = max(
+                self.applied_saturation,
+                self.bump_center_kick_saturation
+            )
+
+        center_to_send = self.apply_bump_center_offset(
+            self.applied_center,
+            now
+        )
+
         # FFB内部状態をROSトピックへpublishする.
         self.publish_ffb_state()
 
@@ -1610,8 +2093,8 @@ class FfbFollowNode(Node):
             return
 
         # Springを停止せず,同じeffect_idで更新する
-        if self.play_spring(self.applied_center):
-            self.last_sent_center = self.applied_center
+        if self.play_spring(center_to_send):
+            self.last_sent_center = center_to_send
             self.last_sent_coeff = self.applied_coeff
             self.last_sent_saturation = self.applied_saturation
             self.last_effect_update_time = now
@@ -1652,6 +2135,7 @@ class FfbFollowNode(Node):
             center_changed
             or coeff_changed
             or saturation_changed
+            or now < self.bump_kick_until_time
             or refresh_required
         )
 
@@ -1680,6 +2164,108 @@ class FfbFollowNode(Node):
             return current + step
 
         return current - step
+
+    def deg_delta_to_spring_center(self, deg):
+        # 角度差[deg]をFF_SPRINGのcenter差分へ変換する.
+        center = int(
+            deg
+            / self.handle_limit_deg
+            * self.spring_center_limit
+        )
+
+        return max(
+            -self.spring_center_limit,
+            min(self.spring_center_limit, center)
+        )
+
+    def bump_strength_rate(self, bump_rate):
+        # 段差検出値を0.0〜1.0へ正規化する.
+        scale_denominator = max(
+            self.bump_angular_full_scale
+            - self.bump_angular_threshold,
+            0.001
+        )
+
+        strength_rate = (
+            bump_rate
+            - self.bump_angular_threshold
+        ) / scale_denominator
+
+        return max(
+            0.0,
+            min(1.0, strength_rate)
+        )
+
+    def trigger_bump_center_kick(self, bump_rate, now):
+        """
+        段差をSpring中心の短い左右キックとしてハンドルへ返す.
+        """
+        if not self.bump_center_kick_enabled:
+            return
+
+        strength_rate = self.bump_strength_rate(bump_rate)
+
+        kick_deg = self.bump_center_kick_min_deg + (
+            self.bump_center_kick_max_deg
+            - self.bump_center_kick_min_deg
+        ) * strength_rate
+
+        self.bump_kick_peak_center = self.deg_delta_to_spring_center(
+            kick_deg
+        )
+        self.bump_kick_start_time = now
+        self.bump_kick_until_time = (
+            now
+            + self.bump_center_kick_duration_sec
+        )
+
+        self.get_logger().info(
+            f'Bump center kick: rate={bump_rate:.3f}, '
+            f'kick_deg={kick_deg:.1f}, '
+            f'peak_center={self.bump_kick_peak_center}'
+        )
+
+    def calculate_bump_center_offset(self, now):
+        # 段差キック中だけ減衰する左右オフセットを返す.
+        if now >= self.bump_kick_until_time:
+            return 0
+
+        duration = max(
+            self.bump_center_kick_duration_sec,
+            0.001
+        )
+        elapsed = max(
+            0.0,
+            now - self.bump_kick_start_time
+        )
+        progress = min(
+            1.0,
+            elapsed / duration
+        )
+
+        decay = 1.0 - progress
+        phase = (
+            2.0
+            * math.pi
+            * self.bump_center_kick_frequency_hz
+            * elapsed
+        )
+        direction = 1.0 if math.sin(phase) >= 0.0 else -1.0
+
+        return int(
+            self.bump_kick_peak_center
+            * direction
+            * decay
+        )
+
+    def apply_bump_center_offset(self, center, now):
+        # Springの通常中心に段差キック分を重ねる.
+        kicked_center = center + self.calculate_bump_center_offset(now)
+
+        return max(
+            -self.spring_center_limit,
+            min(self.spring_center_limit, kicked_center)
+        )
 
     """
     Springエフェクト
@@ -1858,6 +2444,389 @@ class FfbFollowNode(Node):
 
         finally:
             self.damper_effect_id = None
+
+    """
+    段差Rumbleエフェクト
+    """
+    def make_bump_rumble_effect(self, weak, strong, effect_id=-1):
+        # 段差を短い振動としてハンドルへ返す.
+        rumble = ff.Rumble(
+            int(strong),
+            int(weak)
+        )
+
+        return ff.Effect(
+            ecodes.FF_RUMBLE,
+            effect_id,
+            0,
+            ff.Trigger(0, 0),
+            ff.Replay(self.bump_rumble_duration_ms, 0),
+            ff.EffectType(
+                ff_rumble_effect=rumble
+            )
+        )
+
+    def play_bump_rumble(self, bump_rate):
+        # 段差の大きさに応じてRumbleの強さを変える.
+        if not self.bump_rumble_enabled:
+            return False
+
+        scale_denominator = max(
+            self.bump_angular_full_scale
+            - self.bump_angular_threshold,
+            0.001
+        )
+
+        strength_rate = (
+            bump_rate
+            - self.bump_angular_threshold
+        ) / scale_denominator
+
+        strength_rate = max(
+            0.0,
+            min(1.0, strength_rate)
+        )
+
+        weak = self.bump_rumble_weak_min + (
+            self.bump_rumble_weak_max
+            - self.bump_rumble_weak_min
+        ) * strength_rate
+
+        strong = self.bump_rumble_strong_min + (
+            self.bump_rumble_strong_max
+            - self.bump_rumble_strong_min
+        ) * strength_rate
+
+        try:
+            effect = self.make_bump_rumble_effect(
+                weak=weak,
+                strong=strong,
+                effect_id=(
+                    -1
+                    if self.bump_effect_id is None
+                    else self.bump_effect_id
+                )
+            )
+
+            updated_id = self.dev.upload_effect(effect)
+
+            if updated_id is not None:
+                self.bump_effect_id = updated_id
+
+            self.dev.write(
+                ecodes.EV_FF,
+                self.bump_effect_id,
+                1
+            )
+
+            self.get_logger().info(
+                f'Bump rumble: rate={bump_rate:.3f}, '
+                f'weak={int(weak)}, strong={int(strong)}'
+            )
+
+            return True
+
+        except Exception as e:
+            self.get_logger().warn(
+                f'Failed to play bump rumble: {e}'
+            )
+            return False
+
+    def stop_bump_rumble(self):
+        # 現在登録している段差Rumbleエフェクトを停止・削除する.
+        if self.bump_effect_id is None:
+            return
+
+        try:
+            self.dev.write(
+                ecodes.EV_FF,
+                self.bump_effect_id,
+                0
+            )
+            self.dev.erase_effect(
+                self.bump_effect_id
+            )
+
+        except Exception as e:
+            self.get_logger().warn(
+                f'Failed to stop bump rumble: {e}'
+            )
+
+        finally:
+            self.bump_effect_id = None
+
+    """
+    段差Periodicエフェクト
+    """
+    def make_bump_periodic_effect(self, magnitude, effect_id=-1):
+        # 段差を短い周期トルクとしてハンドルへ返す.
+        envelope = ff.Envelope(
+            0,
+            0,
+            int(self.bump_periodic_duration_ms),
+            0
+        )
+        periodic = ff.Periodic(
+            ecodes.FF_SQUARE,
+            int(self.bump_periodic_period_ms),
+            int(magnitude),
+            0,
+            0,
+            envelope,
+            0,
+            None
+        )
+
+        return ff.Effect(
+            ecodes.FF_PERIODIC,
+            effect_id,
+            int(self.bump_periodic_direction),
+            ff.Trigger(0, 0),
+            ff.Replay(self.bump_periodic_duration_ms, 0),
+            ff.EffectType(
+                ff_periodic_effect=periodic
+            )
+        )
+
+    def prepare_bump_periodic_effect(self):
+        # 段差検出時の遅延を避けるため,周期エフェクトを先に登録する.
+        if not self.bump_periodic_enabled:
+            return False
+
+        if not self.bump_periodic_preload_enabled:
+            return False
+
+        if self.bump_periodic_effect_id is not None:
+            return True
+
+        try:
+            effect = self.make_bump_periodic_effect(
+                magnitude=self.bump_periodic_max_magnitude,
+                effect_id=-1
+            )
+            updated_id = self.dev.upload_effect(effect)
+
+            if updated_id is None:
+                return False
+
+            self.bump_periodic_effect_id = updated_id
+            self.get_logger().info(
+                f'Bump periodic preloaded: '
+                f'effect_id={self.bump_periodic_effect_id}, '
+                f'magnitude={self.bump_periodic_max_magnitude}, '
+                f'period_ms={self.bump_periodic_period_ms}, '
+                f'duration_ms={self.bump_periodic_duration_ms}'
+            )
+            return True
+
+        except Exception as e:
+            self.get_logger().warn(
+                f'Failed to preload bump periodic: {e}'
+            )
+            return False
+
+    def play_bump_periodic(self, bump_rate):
+        if not self.bump_periodic_enabled:
+            return False
+
+        strength_rate = self.bump_strength_rate(bump_rate)
+        magnitude = self.bump_periodic_min_magnitude + (
+            self.bump_periodic_max_magnitude
+            - self.bump_periodic_min_magnitude
+        ) * strength_rate
+
+        try:
+            if self.bump_periodic_preload_enabled:
+                if not self.prepare_bump_periodic_effect():
+                    return False
+
+            else:
+                effect = self.make_bump_periodic_effect(
+                    magnitude=magnitude,
+                    effect_id=(
+                        -1
+                        if self.bump_periodic_effect_id is None
+                        else self.bump_periodic_effect_id
+                    )
+                )
+
+                updated_id = self.dev.upload_effect(effect)
+
+                if updated_id is not None:
+                    self.bump_periodic_effect_id = updated_id
+
+            self.dev.write(
+                ecodes.EV_FF,
+                self.bump_periodic_effect_id,
+                0
+            )
+
+            self.dev.write(
+                ecodes.EV_FF,
+                self.bump_periodic_effect_id,
+                1
+            )
+
+            self.get_logger().info(
+                f'Bump periodic: rate={bump_rate:.3f}, '
+                f'magnitude={int(magnitude)}, '
+                f'period_ms={self.bump_periodic_period_ms}, '
+                f'preloaded={self.bump_periodic_preload_enabled}'
+            )
+
+            return True
+
+        except Exception as e:
+            self.get_logger().warn(
+                f'Failed to play bump periodic: {e}'
+            )
+            return False
+
+    def stop_bump_periodic(self):
+        if self.bump_periodic_effect_id is None:
+            return
+
+        try:
+            self.dev.write(
+                ecodes.EV_FF,
+                self.bump_periodic_effect_id,
+                0
+            )
+            self.dev.erase_effect(
+                self.bump_periodic_effect_id
+            )
+
+        except Exception as e:
+            self.get_logger().warn(
+                f'Failed to stop bump periodic: {e}'
+            )
+
+        finally:
+            self.bump_periodic_effect_id = None
+
+    """
+    段差Constantキック
+    """
+    def make_bump_constant_effect(self, level, effect_id=-1):
+        # ハンドルへ短い直接トルクを入れる.
+        envelope = ff.Envelope(
+            0,
+            0,
+            int(self.bump_constant_pulse_ms),
+            0
+        )
+        constant = ff.Constant(
+            int(level),
+            envelope
+        )
+
+        return ff.Effect(
+            ecodes.FF_CONSTANT,
+            effect_id,
+            0,
+            ff.Trigger(0, 0),
+            ff.Replay(self.bump_constant_pulse_ms, 0),
+            ff.EffectType(
+                ff_constant_effect=constant
+            )
+        )
+
+    def upload_bump_constant_effect(self, level):
+        effect = self.make_bump_constant_effect(
+            level=level,
+            effect_id=(
+                -1
+                if self.bump_constant_effect_id is None
+                else self.bump_constant_effect_id
+            )
+        )
+
+        updated_id = self.dev.upload_effect(effect)
+
+        if updated_id is not None:
+            self.bump_constant_effect_id = updated_id
+
+    def play_bump_constant_level(self, level):
+        try:
+            self.upload_bump_constant_effect(level)
+            self.dev.write(
+                ecodes.EV_FF,
+                self.bump_constant_effect_id,
+                1
+            )
+            return True
+
+        except Exception as e:
+            self.get_logger().warn(
+                f'Failed to play bump constant kick: {e}'
+            )
+            return False
+
+    def play_bump_constant_kick(self, bump_rate, angular_x, now):
+        # 直接トルクを左右2発で入れて段差感を作る.
+        if not self.bump_constant_kick_enabled:
+            return False
+
+        strength_rate = self.bump_strength_rate(bump_rate)
+        level = self.bump_constant_min_level + (
+            self.bump_constant_max_level
+            - self.bump_constant_min_level
+        ) * strength_rate
+
+        # ピッチ方向の揺れに合わせて初撃方向を変える.
+        direction = -1 if angular_x < 0.0 else 1
+        first_level = int(level * direction)
+        second_level = -first_level
+
+        if self.play_bump_constant_level(first_level):
+            self.bump_constant_second_level = second_level
+            self.bump_constant_second_due_time = (
+                now
+                + self.bump_constant_second_delay_sec
+            )
+            self.get_logger().info(
+                f'Bump constant kick: rate={bump_rate:.3f}, '
+                f'level={first_level}, next={second_level}'
+            )
+            return True
+
+        return False
+
+    def update_bump_constant_second_pulse(self, now):
+        # 2発目の逆向きトルクを短い遅延で出す.
+        if self.bump_constant_second_due_time <= 0.0:
+            return
+
+        if now < self.bump_constant_second_due_time:
+            return
+
+        level = self.bump_constant_second_level
+        self.bump_constant_second_due_time = 0.0
+        self.bump_constant_second_level = 0
+        self.play_bump_constant_level(level)
+
+    def stop_bump_constant(self):
+        # 現在登録している段差Constantエフェクトを停止・削除する.
+        if self.bump_constant_effect_id is None:
+            return
+
+        try:
+            self.dev.write(
+                ecodes.EV_FF,
+                self.bump_constant_effect_id,
+                0
+            )
+            self.dev.erase_effect(
+                self.bump_constant_effect_id
+            )
+
+        except Exception as e:
+            self.get_logger().warn(
+                f'Failed to stop bump constant kick: {e}'
+            )
+
+        finally:
+            self.bump_constant_effect_id = None
     
     def stop_spring(self):
         # 現在再生中のSpringエフェクトを停止・削除する.
@@ -1926,6 +2895,9 @@ class FfbFollowNode(Node):
         
         self.stop_spring()
         self.stop_damper()
+        self.stop_bump_rumble()
+        self.stop_bump_constant()
+        self.stop_bump_periodic()
 
         self.set_autocenter(
             self.shutdown_autocenter

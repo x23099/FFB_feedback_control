@@ -25,11 +25,14 @@ def generate_launch_description():
         Node(
             package='twist_mux',
             executable='twist_mux',
-            name='twist_mux_node',
+            name='twist_mux',
             output='screen',
             parameters=[twist_mux_config],
             remappings=[
-                ('cmd_vel_out', '/commands/velocity')
+                ('/cmd_vel_out', '/cmd_vel'),
+                ('cmd_vel_out', '/cmd_vel'),
+                ('/twist', '/cmd_vel'),
+                ('twist', '/cmd_vel'),
             ],
         ),
 

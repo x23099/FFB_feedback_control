@@ -8,6 +8,7 @@ ffb_follow_node:
     manual_active_topic: /handle/manual_active
     gear_topic: /handle/gear
     steering_norm_topic: /handle/steering_norm
+    imu_topic: /sensors/imu_data_raw
 
     # G923デバイス
     device_path: /dev/input/by-id/usb-Logitech_G923_Racing_Wheel_for_PlayStation_4_and_PC_USYMUGUXEREJOFORUFUMEZIDU-event-joystick
@@ -61,6 +62,43 @@ ffb_follow_node:
     damper_coeff: 2500
     damper_saturation: 6000
     damper_deadband: 0
+
+    # 段差振動FFB
+    bump_feedback_enabled: true
+    bump_angular_threshold: 0.35
+    bump_angular_full_scale: 0.55
+    bump_min_interval_sec: 0.18
+    bump_cooldown_override_rate: 0.60
+    bump_min_speed: 0.03
+    bump_rumble_enabled: false
+    bump_rumble_duration_ms: 120
+    bump_rumble_weak_min: 4096
+    bump_rumble_weak_max: 17920
+    bump_rumble_strong_min: 12288
+    bump_rumble_strong_max: 32767
+    bump_center_kick_enabled: false
+    bump_center_kick_min_deg: 6.0
+    bump_center_kick_max_deg: 28.0
+    bump_center_kick_duration_sec: 0.24
+    bump_center_kick_frequency_hz: 7.0
+    bump_center_kick_coeff: 28000
+    bump_center_kick_saturation: 32000
+    bump_constant_kick_enabled: false
+    bump_constant_min_level: 9000
+    bump_constant_max_level: 24000
+    bump_constant_pulse_ms: 45
+    bump_constant_second_delay_sec: 0.055
+    bump_periodic_enabled: true
+    bump_periodic_preload_enabled: true
+    bump_periodic_min_magnitude: 6000
+    bump_periodic_max_magnitude: 11000
+    bump_periodic_period_ms: 35
+    bump_periodic_duration_ms: 120
+    bump_periodic_direction: 16384
+    bump_angular_z_weight: 0.25
+    bump_angular_delta_weight: 0.25
+    bump_debug_enabled: true
+    bump_debug_period_sec: 1.0
 
     # カーブ負荷FFB
     corner_load_enabled: true

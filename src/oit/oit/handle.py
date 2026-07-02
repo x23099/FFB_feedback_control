@@ -29,16 +29,22 @@ class HandleNode(Node):
 
         # 人間が手動操作中かFFB側へ通知する。
         self.manual_active_pub = self.create_publisher(Bool, '/handle/manual_active', 10)
+
+        # 緊急停止状態をUIや他ノードへ通知する.
+        self.emergency_stop_pub = self.create_publisher(Bool, '/handle/emergency_stop', 10)
        
         # 現在、人間が手動介入中か。
         self.manual_active = False
+
+        # 緊急停止がラッチされているか.
+        self.emergency_stop_active = False
         
         # 現在のギア情報.
         self.gear_pub = self.create_publisher(Int32, '/handle/gear', 10)
 
         # 現在の走行モードをUI側へ通知する.
         self.drive_mode_pub = self.create_publisher(String, '/handle/drive_mode', 10)
-
+        self.page_delta_pub = self.create_publisher(Int32, '/handle/page_delta', 10)
         # G923のLED制御用hidraw.
         self.led_hidraw_path = '/dev/g923_led'
 
@@ -99,14 +105,22 @@ class HandleNode(Node):
         # モード切り替えボタン.
         self.mode_switch_code = 712
 
+        # 緊急停止ボタン. G923の○ボタン.
+        self.emergency_stop_code = 290
+
         # モード切り替えの連打防止.
         self.last_mode_switch_time = 0.0
         self.mode_switch_debounce_sec = 0.30
+
+        # 緊急停止ボタンの連打防止.
+        self.last_emergency_stop_button_time = 0.0
+        self.emergency_stop_debounce_sec = 0.30
 
         # パドルのイベントコード.
         # evtestで確認した値へ変更する.
         self.paddle_up_code = 292
         self.paddle_down_code = 293
+        self.page_hat_x_code = 16
 
         # 起動時はニュートラルにする.
         self.gear = 0
@@ -153,6 +167,13 @@ class HandleNode(Node):
 
         # 残りのゼロ指令送信回数.
         self.stop_publish_remaining = 0
+
+        # 手動操作で実際にpublishする直進速度[m/s].
+        self.manual_linear_x = 0.0
+
+        # 手動速度の加速・惰性減速[m/s^2].
+        self.manual_accel_limit = 0.8
+        self.manual_coast_decel = 0.35
         
         # 旋回時の速度制限設定.
         self.corner_speed_limit_enabled = False
@@ -220,10 +241,11 @@ class HandleNode(Node):
         self.clutch_active = False
 
         # ギア状態.
-        # 1〜5: 前進
+        # 0 : ニュートラル
+        # 1〜6: 前進
         # -1 : リバース
-        self.gear = 1
-        self.linear_gain = 1.0
+        self.gear = 0
+        self.linear_gain = 0.0
 
         # 入力スレッド管理
         self.running = True
@@ -302,16 +324,20 @@ class HandleNode(Node):
                     continue
 
                 for event in self.g923.read():
-                    # プレステマークは環境によってtypeやvalueが変わることがあるため, code 712を最優先で拾う.
                     if event.code == self.mode_switch_code:
                         self.handle_mode_switch_event(event)
                         continue
 
+                    if self.handle_page_event(event):
+                        continue
+
+                    if event.type == ecodes.EV_KEY:
+                        self.handle_key_event(event)
+                        continue
+
                     if event.type == ecodes.EV_ABS:
                         self.handle_abs_event(event)
-
-                    elif event.type == ecodes.EV_KEY:
-                        self.handle_key_event(event)
+                        continue
 
             except BlockingIOError:
                 continue
@@ -319,6 +345,25 @@ class HandleNode(Node):
             except Exception as e:
                 self.get_logger().error(f'Input error: {e}')
 
+    def publish_page_delta(self, delta):
+        msg = Int32()
+        msg.data = int(delta)
+        self.page_delta_pub.publish(msg)
+        self.get_logger().info(f'UI page delta: {delta}')
+
+
+    def handle_page_event(self, event):
+        if event.type == ecodes.EV_ABS and event.code in (ecodes.ABS_HAT0X, self.page_hat_x_code):
+            if event.value < 0:
+                self.publish_page_delta(-1)
+                return True
+            if event.value > 0:
+                self.publish_page_delta(1)
+                return True
+            return False
+
+        return False
+    
     def handle_mode_switch_event(self, event):
         """
         プレステマークでMT/ATを切り替える.
@@ -342,6 +387,128 @@ class HandleNode(Node):
         )
 
         self.toggle_drive_mode()
+
+
+    def publish_zero_command(self):
+        """
+        Kobukiへ即時停止指令を送る.
+        """
+        self.cmd_pub.publish(Twist())
+
+
+    def reset_manual_motion(self):
+        """
+        手動操作の内部速度を即座に0へ戻す.
+        """
+        self.manual_linear_x = 0.0
+
+
+    def approach_value(self, current, target, max_delta):
+        """
+        currentを1周期あたりmax_delta以内でtargetへ近づける.
+        """
+        if current < target:
+            return min(current + max_delta, target)
+
+        if current > target:
+            return max(current - max_delta, target)
+
+        return current
+
+
+    def calculate_target_linear_command(self):
+        """
+        現在の入力から駆動力としての目標直進速度を作る.
+        """
+        if self.clutch_active:
+            return 0.0
+
+        if self.throttle_norm <= self.throttle_threshold:
+            return 0.0
+
+        return (
+            self.throttle_norm
+            * self.max_linear
+            * self.linear_gain
+        )
+
+
+    def update_manual_linear_command(self):
+        """
+        目標速度へ追従しつつ,駆動力が抜けたときは惰性で減速する.
+        """
+        target_linear_x = self.calculate_target_linear_command()
+
+        if abs(target_linear_x) > abs(self.manual_linear_x):
+            limit = self.manual_accel_limit
+        else:
+            limit = self.manual_coast_decel
+
+        max_delta = limit * self.publish_period
+        self.manual_linear_x = self.approach_value(
+            self.manual_linear_x,
+            target_linear_x,
+            max_delta
+        )
+
+        if abs(self.manual_linear_x) < self.linear_command_deadzone:
+            self.manual_linear_x = 0.0
+
+        return self.manual_linear_x
+
+
+    def publish_emergency_stop_state(self):
+        """
+        緊急停止状態をpublishする.
+        """
+        msg = Bool()
+        msg.data = bool(self.emergency_stop_active)
+        self.emergency_stop_pub.publish(msg)
+
+
+    def handle_emergency_stop_event(self, pressed):
+        """
+        ○ボタンで緊急停止をラッチし,ブレーキ中の○で解除する.
+        """
+        if not pressed:
+            return
+
+        now = time.time()
+
+        if (
+            now - self.last_emergency_stop_button_time
+            < self.emergency_stop_debounce_sec
+        ):
+            return
+
+        self.last_emergency_stop_button_time = now
+
+        if not self.emergency_stop_active:
+            self.emergency_stop_active = True
+            self.stop_publish_remaining = self.stop_publish_cycles
+            self.reset_manual_motion()
+            self.publish_zero_command()
+            self.publish_emergency_stop_state()
+            self.get_logger().warn(
+                'Emergency stop activated.'
+            )
+            return
+
+        if self.brake_active:
+            self.emergency_stop_active = False
+            self.stop_publish_remaining = self.stop_publish_cycles
+            self.reset_manual_motion()
+            self.publish_zero_command()
+            self.publish_emergency_stop_state()
+            self.get_logger().warn(
+                'Emergency stop released with brake pressed.'
+            )
+            return
+
+        self.publish_zero_command()
+        self.get_logger().warn(
+            'Emergency stop release rejected: press brake and ○.'
+        )
 
 
     def calculate_angular_command(self, linear_x=0.0):
@@ -438,6 +605,11 @@ class HandleNode(Node):
         pressed = event.value == 1
         released = event.value == 0
 
+        # ○ボタンは常に最優先で緊急停止へ割り当てる.
+        if code == self.emergency_stop_code:
+            self.handle_emergency_stop_event(pressed)
+            return
+
         # プレステマーク, eventcode 712を押したときにMTとATを切り替える.
         if code == self.mode_switch_code and pressed:
             self.toggle_drive_mode()
@@ -476,6 +648,7 @@ class HandleNode(Node):
         # モード切り替え時はニュートラルにする.
         self.gear = 0
         self.linear_gain = 0.0
+        self.reset_manual_motion()
 
         # 残っている走行指令を停止させる.
         self.stop_publish_remaining = max(
@@ -810,10 +983,18 @@ class HandleNode(Node):
         # 走行モードをpublish.
         self.publish_drive_mode()
 
-        # アクセルかブレーキ操作中を手動操作として扱う.
+        coasting_active = (
+            abs(self.manual_linear_x)
+            > self.linear_command_deadzone
+        )
+
+        # アクセル,クラッチ,ブレーキ,緊急停止,惰性走行を手動操作として扱う.
         manual_active = (
             self.throttle_norm > self.throttle_threshold
+            or self.clutch_active
             or self.brake_active
+            or self.emergency_stop_active
+            or coasting_active
         )
 
         # FFB側へ手動操作状態を通知する.
@@ -821,8 +1002,17 @@ class HandleNode(Node):
         manual_msg.data = manual_active
         self.manual_active_pub.publish(manual_msg)
 
+        # 緊急停止状態を通知する.
+        self.publish_emergency_stop_state()
+
         # シフトライトを更新する.
         self.update_shift_leds()
+
+        if self.emergency_stop_active:
+            self.stop_publish_remaining = self.stop_publish_cycles
+            self.reset_manual_motion()
+            self.publish_zero_command()
+            return
         
         if manual_active:
             # 手動操作終了後に送るゼロ指令回数を準備する.
@@ -832,23 +1022,20 @@ class HandleNode(Node):
 
             if self.brake_active:
                 # ブレーキ中は直進と旋回を両方停止する.
+                self.reset_manual_motion()
                 twist.linear.x = 0.0
                 twist.angular.z = 0.0
 
             else:
-                # アクセル量とギア倍率から直進速度を作る.
-                twist.linear.x = (
-                    self.throttle_norm
-                    * self.max_linear
-                    * self.linear_gain
-                )
+                # アクセルオフ,ギア操作,クラッチ中は惰性で0へ近づける.
+                twist.linear.x = self.update_manual_linear_command()
 
                 # ハンドル角度と速度から旋回角速度を作る.
                 angular_command = self.calculate_angular_command(
                     twist.linear.x
                 )
-                # 後退時は操舵方向を反転する.
-                if self.linear_gain < 0:
+                # 後退方向へ惰性走行しているときも操舵方向を反転する.
+                if twist.linear.x < 0:
                     twist.angular.z = -angular_command
                 else:
                     twist.angular.z = angular_command

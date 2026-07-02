@@ -23,7 +23,7 @@ class SquareNode(Node):
         """
         # 自動走行用の速度指令を publish
         # twist_mux を使う場合は cmd_vel_auto に出す
-        self.pub = self.create_publisher(Twist, 'cmd_vel_auto', 10)
+        self.pub = self.create_publisher(Twist, '/cmd_vel_auto', 10)
 
         # odom から現在位置と向きを取得
         self.create_subscription(Odometry, '/odom', self.odom_callback, 10)

@@ -26,10 +26,10 @@ setup(
         'console_scripts': [
             'handle = oit.handle:main',
             'square_node = oit.square_node:main',
-            'vel_selector = oit.vel_selector:main',
             'ffb_test = oit.ffb_test:main',
             'ffb_follow = oit.ffb_follow:main',
             'spring = oit.spring_test:main',
+            'periodic = oit.periodic_test:main',
             'spin = oit.spin_node:main',
         ],
     },
