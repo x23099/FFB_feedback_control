@@ -17,7 +17,7 @@ ffplay \
 -probesize 32 \
 -analyzeduration 0 \
 -window_title "THETA UI Receiver" \
-udp://@:$PORT
+srt://@:$PORT?mode=listener&latency=50
 
 kill "$LATENCY_UI_PID" 2>/dev/null
 
