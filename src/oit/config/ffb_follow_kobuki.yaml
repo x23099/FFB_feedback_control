@@ -6,6 +6,7 @@ ffb_follow_node:
     auto_cmd_topic: /cmd_vel_auto
     odom_topic: /odom
     manual_active_topic: /handle/manual_active
+    emergency_stop_topic: /handle/emergency_stop
     gear_topic: /handle/gear
     steering_norm_topic: /handle/steering_norm
     imu_topic: /sensors/imu_data_raw
@@ -99,6 +100,13 @@ ffb_follow_node:
     bump_angular_delta_weight: 0.25
     bump_debug_enabled: true
     bump_debug_period_sec: 1.0
+
+    # 緊急停止通知FFB
+    emergency_feedback_enabled: true
+    emergency_feedback_magnitude: 5000
+    emergency_feedback_period_ms: 35
+    emergency_feedback_duration_ms: 120
+    emergency_feedback_direction: 16384
 
     # カーブ負荷FFB
     corner_load_enabled: true

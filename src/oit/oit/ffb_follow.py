@@ -59,6 +59,11 @@ class FfbFollowNode(Node):
         )
 
         self.declare_parameter(
+            'emergency_stop_topic',
+            '/handle/emergency_stop'
+        )
+
+        self.declare_parameter(
             'gear_topic',
             '/handle/gear'
         )
@@ -417,6 +422,32 @@ class FfbFollowNode(Node):
             1.0
         )
 
+        # 緊急停止通知FFB
+        self.declare_parameter(
+            'emergency_feedback_enabled',
+            True
+        )
+
+        self.declare_parameter(
+            'emergency_feedback_magnitude',
+            3500
+        )
+
+        self.declare_parameter(
+            'emergency_feedback_period_ms',
+            35
+        )
+
+        self.declare_parameter(
+            'emergency_feedback_duration_ms',
+            60
+        )
+
+        self.declare_parameter(
+            'emergency_feedback_direction',
+            0x4000
+        )
+
         # カーブ負荷FFB
         self.declare_parameter(
             'corner_load_enabled',
@@ -552,6 +583,10 @@ class FfbFollowNode(Node):
 
         self.manual_active_topic = str(
             self.get_parameter('manual_active_topic').value
+        )
+
+        self.emergency_stop_topic = str(
+            self.get_parameter('emergency_stop_topic').value
         )
 
         self.gear_topic = str(
@@ -864,6 +899,26 @@ class FfbFollowNode(Node):
             self.get_parameter('bump_debug_period_sec').value
         )
 
+        self.emergency_feedback_enabled = bool(
+            self.get_parameter('emergency_feedback_enabled').value
+        )
+
+        self.emergency_feedback_magnitude = int(
+            self.get_parameter('emergency_feedback_magnitude').value
+        )
+
+        self.emergency_feedback_period_ms = int(
+            self.get_parameter('emergency_feedback_period_ms').value
+        )
+
+        self.emergency_feedback_duration_ms = int(
+            self.get_parameter('emergency_feedback_duration_ms').value
+        )
+
+        self.emergency_feedback_direction = int(
+            self.get_parameter('emergency_feedback_direction').value
+        )
+
         # カーブ負荷FFB
         self.corner_load_enabled = bool(
             self.get_parameter('corner_load_enabled').value
@@ -1007,6 +1062,9 @@ class FfbFollowNode(Node):
         # 手動操作中かどうか
         self.manual_active = False
 
+        # 緊急停止ラッチ中かどうか.
+        self.emergency_stop_active = False
+
         # handle.pyから受信した現在ギア.
         self.current_gear = 0
 
@@ -1057,6 +1115,9 @@ class FfbFollowNode(Node):
 
         # 現在登録している段差PeriodicエフェクトID.
         self.bump_periodic_effect_id = None
+
+        # 現在登録している緊急停止通知エフェクトID.
+        self.emergency_feedback_effect_id = None
 
         # 最後に段差振動を出した時刻.
         self.last_bump_time = 0.0
@@ -1135,6 +1196,7 @@ class FfbFollowNode(Node):
             self.play_damper()
 
         self.prepare_bump_periodic_effect()
+        self.prepare_emergency_feedback_effect()
     
     def initialize_ros_interfaces(self):
         """
@@ -1162,6 +1224,14 @@ class FfbFollowNode(Node):
             Bool,
             self.manual_active_topic,
             self.manual_active_callback,
+            10
+        )
+
+        # 緊急停止状態
+        self.create_subscription(
+            Bool,
+            self.emergency_stop_topic,
+            self.emergency_stop_callback,
             10
         )
 
@@ -1593,6 +1663,21 @@ class FfbFollowNode(Node):
             self.get_logger().info(
                 'Manual override ended. '
                 f'Autocenter={self.idle_autocenter}'
+            )
+
+    def emergency_stop_callback(self, msg):
+        # 緊急停止のON/OFF変化を軽い振動で通知する.
+        new_state = bool(msg.data)
+
+        if new_state == self.emergency_stop_active:
+            return
+
+        self.emergency_stop_active = new_state
+
+        if self.play_emergency_feedback():
+            state_text = 'activated' if new_state else 'released'
+            self.get_logger().info(
+                f'Emergency stop feedback: {state_text}'
             )
 
     """
@@ -2446,6 +2531,107 @@ class FfbFollowNode(Node):
             self.damper_effect_id = None
 
     """
+    緊急停止通知エフェクト
+    """
+    def make_emergency_feedback_effect(self, effect_id=-1):
+        # 緊急停止のON/OFFを短く軽い振動として通知する.
+        envelope = ff.Envelope(
+            0,
+            0,
+            int(self.emergency_feedback_duration_ms),
+            0
+        )
+        periodic = ff.Periodic(
+            ecodes.FF_SQUARE,
+            int(self.emergency_feedback_period_ms),
+            int(self.emergency_feedback_magnitude),
+            0,
+            0,
+            envelope,
+            0,
+            None
+        )
+
+        return ff.Effect(
+            ecodes.FF_PERIODIC,
+            effect_id,
+            int(self.emergency_feedback_direction),
+            ff.Trigger(0, 0),
+            ff.Replay(self.emergency_feedback_duration_ms, 0),
+            ff.EffectType(
+                ff_periodic_effect=periodic
+            )
+        )
+
+    def prepare_emergency_feedback_effect(self):
+        if not self.emergency_feedback_enabled:
+            return False
+
+        if self.emergency_feedback_effect_id is not None:
+            return True
+
+        try:
+            effect = self.make_emergency_feedback_effect()
+            updated_id = self.dev.upload_effect(effect)
+
+            if updated_id is None:
+                return False
+
+            self.emergency_feedback_effect_id = updated_id
+            return True
+
+        except Exception as e:
+            self.get_logger().warn(
+                f'Failed to preload emergency feedback: {e}'
+            )
+            return False
+
+    def play_emergency_feedback(self):
+        if not self.prepare_emergency_feedback_effect():
+            return False
+
+        try:
+            self.dev.write(
+                ecodes.EV_FF,
+                self.emergency_feedback_effect_id,
+                0
+            )
+            self.dev.write(
+                ecodes.EV_FF,
+                self.emergency_feedback_effect_id,
+                1
+            )
+            return True
+
+        except Exception as e:
+            self.get_logger().warn(
+                f'Failed to play emergency feedback: {e}'
+            )
+            return False
+
+    def stop_emergency_feedback(self):
+        if self.emergency_feedback_effect_id is None:
+            return
+
+        try:
+            self.dev.write(
+                ecodes.EV_FF,
+                self.emergency_feedback_effect_id,
+                0
+            )
+            self.dev.erase_effect(
+                self.emergency_feedback_effect_id
+            )
+
+        except Exception as e:
+            self.get_logger().warn(
+                f'Failed to stop emergency feedback: {e}'
+            )
+
+        finally:
+            self.emergency_feedback_effect_id = None
+
+    """
     段差Rumbleエフェクト
     """
     def make_bump_rumble_effect(self, weak, strong, effect_id=-1):
@@ -2898,6 +3084,7 @@ class FfbFollowNode(Node):
         self.stop_bump_rumble()
         self.stop_bump_constant()
         self.stop_bump_periodic()
+        self.stop_emergency_feedback()
 
         self.set_autocenter(
             self.shutdown_autocenter
