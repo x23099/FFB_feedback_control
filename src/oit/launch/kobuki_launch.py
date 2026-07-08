@@ -54,4 +54,14 @@ def generate_launch_description():
                 ffb_config
             ],
         ),
+        
+        Node(
+            package='oit',
+            executable='heartbeat_sender',
+            name='heartbeat_sender_node',
+            output='screen',
+            parameters=[
+                os.path.join(pkg_share, 'config', 'failsafe_params.yaml')
+            ],
+        ),
     ])

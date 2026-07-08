@@ -1,0 +1,14 @@
+heartbeat_sender_node:
+  ros__parameters:
+    heartbeat_topic: /remote_heartbeat
+    publish_rate_hz: 20.0
+
+failsafe_watchdog_node:
+  ros__parameters:
+    heartbeat_topic: /remote_heartbeat
+    safety_cmd_topic: /cmd_vel_safety
+    timeout_sec: 1.0
+    recovery_sec: 2.0
+    check_rate_hz: 20.0
+    stop_publish_rate_hz: 20.0
+    use_best_effort: true

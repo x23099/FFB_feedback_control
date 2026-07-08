@@ -31,6 +31,8 @@ setup(
             'spring = oit.spring_test:main',
             'periodic = oit.periodic_test:main',
             'spin = oit.spin_node:main',
+            'heartbeat_sender = oit.heartbeat_sender:main',
+            'failsafe_watchdog = oit.failsafe_watchdog:main',
         ],
     },
 )
