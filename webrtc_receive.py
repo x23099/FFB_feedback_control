@@ -59,6 +59,7 @@ class WebRTCReceiveWindow(QWidget):
 
     @Slot(np.ndarray)
     def update_frame(self, frame):
+        t0 = time.perf_counter()
         h, w, ch = frame.shape
         bytes_per_line = ch * w
         
@@ -72,6 +73,19 @@ class WebRTCReceiveWindow(QWidget):
             Qt.SmoothTransformation
         )
         self.label_video.setPixmap(scaled_pixmap)
+        t1 = time.perf_counter()
+
+        if not hasattr(self, 'draw_count'):
+            self.draw_count = 0
+            self.draw_total_time = 0.0
+        self.draw_count += 1
+        self.draw_total_time += (t1 - t0)
+        
+        if self.draw_count >= 30:
+            avg_draw = (self.draw_total_time / 30) * 1000
+            print(f"[RCV-LATENCY] Qt Draw & Scale (30 frames avg): {avg_draw:.1f}ms")
+            self.draw_count = 0
+            self.draw_total_time = 0.0
 
     @Slot(float, float, str)
     def update_latency(self, latency_ms, fps, sender_ip):
@@ -142,11 +156,31 @@ class WebRTCServerThread(threading.Thread):
         )
 
     async def process_video(self, track):
+        recv_count = 0
+        recv_stats = {'recv': 0.0, 'conv': 0.0}
+        
         while True:
             try:
+                t_recv_start = time.perf_counter()
                 frame = await track.recv()
+                t_recv_end = time.perf_counter()
+                
+                t_conv_start = time.perf_counter()
                 img = frame.to_ndarray(format="rgb24")
+                t_conv_end = time.perf_counter()
+                
                 self.signals.frame_received.emit(img)
+                
+                recv_count += 1
+                recv_stats['recv'] += (t_recv_end - t_recv_start)
+                recv_stats['conv'] += (t_conv_end - t_conv_start)
+                
+                if recv_count >= 30:
+                    avg_recv = (recv_stats['recv'] / 30) * 1000
+                    avg_conv = (recv_stats['conv'] / 30) * 1000
+                    print(f"[RCV-LATENCY] Track.recv() wait: {avg_recv:.1f}ms | RGB conversion: {avg_conv:.1f}ms")
+                    recv_count = 0
+                    recv_stats = {'recv': 0.0, 'conv': 0.0}
             except Exception as e:
                 logger.error(f"Error processing video frame: {e}")
                 break
