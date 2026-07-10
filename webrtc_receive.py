@@ -10,8 +10,9 @@ from collections import deque
 import numpy as np
 from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription
-from PySide6.QtCore import Qt, Signal, QObject, Slot
-from PySide6.QtGui import QFont, QImage, QPixmap
+from PySide6.QtCore import Qt, Signal, QObject, Slot, QRectF
+from PySide6.QtGui import QFont, QImage, QPixmap, QPainter
+from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout, QHBoxLayout
 
 logging.basicConfig(level=logging.INFO)
@@ -24,17 +25,77 @@ class ReceiveSignals(QObject):
     frame_received = Signal(np.ndarray)
     latency_updated = Signal(float, float, str)
 
+class VideoOpenGLWidget(QOpenGLWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.image = None
+        self.mutex = threading.Lock()
+
+    def set_image(self, img_ndarray):
+        with self.mutex:
+            self.image = img_ndarray
+        self.update()
+
+    def initializeGL(self):
+        funcs = self.context().functions()
+        funcs.glClearColor(0.0, 0.0, 0.0, 1.0)
+
+    def resizeGL(self, w, h):
+        funcs = self.context().functions()
+        funcs.glViewport(0, 0, w, h)
+
+    def paintGL(self):
+        t0 = time.perf_counter()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
+        
+        painter.fillRect(self.rect(), Qt.black)
+        
+        img_data = None
+        with self.mutex:
+            img_data = self.image
+            
+        if img_data is not None:
+            h, w, ch = img_data.shape
+            qimg = QImage(img_data.data, w, h, ch * w, QImage.Format_RGB888)
+            
+            rect = self.rect()
+            scale_w = rect.width() / w
+            scale_h = rect.height() / h
+            scale = min(scale_w, scale_h)
+            
+            draw_w = int(w * scale)
+            draw_h = int(h * scale)
+            draw_x = int((rect.width() - draw_w) / 2)
+            draw_y = int((rect.height() - draw_h) / 2)
+            
+            target_rect = QRectF(draw_x, draw_y, draw_w, draw_h)
+            painter.drawImage(target_rect, qimg)
+            
+        painter.end()
+        t1 = time.perf_counter()
+        
+        if not hasattr(self, 'draw_count'):
+            self.draw_count = 0
+            self.draw_total_time = 0.0
+        self.draw_count += 1
+        self.draw_total_time += (t1 - t0)
+        
+        if self.draw_count >= 30:
+            avg_draw = (self.draw_total_time / 30) * 1000
+            print(f"[RCV-LATENCY] OpenGL GPU Render (30 frames avg): {avg_draw:.1f}ms")
+            self.draw_count = 0
+            self.draw_total_time = 0.0
+
+
 class WebRTCReceiveWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("THETA UI WebRTC Receiver")
         self.resize(1280, 800)
 
-        # Video Display Label.
-        self.label_video = QLabel("Waiting for WebRTC stream...")
-        self.label_video.setAlignment(Qt.AlignCenter)
-        self.label_video.setStyleSheet("background-color: black; color: white;")
-        self.label_video.setFont(QFont("Arial", 24))
+        # Video Display using OpenGL Widget.
+        self.label_video = VideoOpenGLWidget(self)
 
         # Latency Display Labels.
         self.label_latency = QLabel("Latency: --- ms")
@@ -59,33 +120,7 @@ class WebRTCReceiveWindow(QWidget):
 
     @Slot(np.ndarray)
     def update_frame(self, frame):
-        t0 = time.perf_counter()
-        h, w, ch = frame.shape
-        bytes_per_line = ch * w
-        
-        # PyAV/aiortc outputs RGB24 format.
-        q_img = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
-        pixmap = QPixmap.fromImage(q_img)
-        
-        scaled_pixmap = pixmap.scaled(
-            self.label_video.size(),
-            Qt.KeepAspectRatio,
-            Qt.FastTransformation
-        )
-        self.label_video.setPixmap(scaled_pixmap)
-        t1 = time.perf_counter()
-
-        if not hasattr(self, 'draw_count'):
-            self.draw_count = 0
-            self.draw_total_time = 0.0
-        self.draw_count += 1
-        self.draw_total_time += (t1 - t0)
-        
-        if self.draw_count >= 30:
-            avg_draw = (self.draw_total_time / 30) * 1000
-            print(f"[RCV-LATENCY] Qt Draw & Scale (30 frames avg): {avg_draw:.1f}ms")
-            self.draw_count = 0
-            self.draw_total_time = 0.0
+        self.label_video.set_image(frame)
 
     @Slot(float, float, str)
     def update_latency(self, latency_ms, fps, sender_ip):
