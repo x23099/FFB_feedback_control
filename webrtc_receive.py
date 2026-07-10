@@ -36,19 +36,12 @@ class VideoOpenGLWidget(QOpenGLWidget):
             self.image = img_ndarray
         self.update()
 
-    def initializeGL(self):
-        funcs = self.context().functions()
-        funcs.glClearColor(0.0, 0.0, 0.0, 1.0)
-
-    def resizeGL(self, w, h):
-        funcs = self.context().functions()
-        funcs.glViewport(0, 0, w, h)
-
-    def paintGL(self):
+    def paintEvent(self, event):
         t0 = time.perf_counter()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
         
+        # 背景を黒でクリア
         painter.fillRect(self.rect(), Qt.black)
         
         img_data = None
@@ -71,6 +64,11 @@ class VideoOpenGLWidget(QOpenGLWidget):
             
             target_rect = QRectF(draw_x, draw_y, draw_w, draw_h)
             painter.drawImage(target_rect, qimg)
+        else:
+            # 接続待ちテキストを表示
+            painter.setPen(Qt.white)
+            painter.setFont(QFont("Arial", 22, QFont.Bold))
+            painter.drawText(self.rect(), Qt.AlignCenter, "Waiting for WebRTC stream...")
             
         painter.end()
         t1 = time.perf_counter()
