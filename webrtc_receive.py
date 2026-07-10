@@ -70,7 +70,7 @@ class WebRTCReceiveWindow(QWidget):
         scaled_pixmap = pixmap.scaled(
             self.label_video.size(),
             Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
+            Qt.FastTransformation
         )
         self.label_video.setPixmap(scaled_pixmap)
         t1 = time.perf_counter()
