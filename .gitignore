@@ -20,3 +20,8 @@ __pycache__/
 # 一時ファイル
 *~
 *.swp
+
+# Antigravity 会話同期用ファイル
+sync_conversations.py
+conversations/
+birds_eye_view/
