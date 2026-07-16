@@ -1,0 +1,12 @@
+cmd_vel_mirror_node:
+  ros__parameters:
+    source_topic: /cmd_vel_joy
+    target_topic: /aiformula_control/handle_controller/cmd_vel
+
+    publish_rate_hz: 20.0
+    source_timeout_sec: 0.3
+
+    linear_scale: 1.0
+    angular_scale: 1.0
+
+    publish_zero_when_stale: true

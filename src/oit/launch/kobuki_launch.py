@@ -64,4 +64,18 @@ def generate_launch_description():
                 os.path.join(pkg_share, 'config', 'failsafe_params.yaml')
             ],
         ),
+
+        Node(
+            package='oit',
+            executable='cmd_vel_mirror',
+            name='cmd_vel_mirror_node',
+            output='screen',
+            parameters=[
+                os.path.join(
+                    pkg_share,
+                    'config',
+                    'cmd_vel_mirror_aiformula.yaml'
+                )
+            ],
+        ),
     ])

@@ -33,6 +33,7 @@ setup(
             'spin = oit.spin_node:main',
             'heartbeat_sender = oit.heartbeat_sender:main',
             'failsafe_watchdog = oit.failsafe_watchdog:main',
+            'cmd_vel_mirror = oit.cmd_vel_mirror:main',
         ],
     },
 )
