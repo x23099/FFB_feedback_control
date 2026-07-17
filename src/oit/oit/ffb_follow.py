@@ -471,7 +471,7 @@ class FfbFollowNode(Node):
         )
         self.declare_parameter(
             'failsafe_lock_autocenter',
-            85
+            95
         )
         self.declare_parameter(
             'failsafe_recovery_magnitude',
@@ -1154,7 +1154,8 @@ class FfbFollowNode(Node):
         self.last_auto_cmd_time = 0.0
 
         # フェイルセーフ（通信断監視）用の状態変数
-        self.last_odom_time = self.get_clock().now().nanoseconds / 1e9
+        self.node_start_time = self.get_clock().now().nanoseconds / 1e9
+        self.last_odom_time = self.node_start_time
         self.failsafe_active = False
         self.failsafe_warning_played = False
         self.failsafe_recovery_played = False
@@ -2176,39 +2177,41 @@ class FfbFollowNode(Node):
         self.update_bump_constant_second_pulse(now)
 
         # フェイルセーフ（通信断検出）チェック
-        is_disconnected = (now - self.last_odom_time > self.failsafe_timeout_sec) or self.failsafe_active_msg
-        
-        if is_disconnected:
-            if not self.failsafe_active:
-                self.failsafe_active = True
-                self.failsafe_warning_played = False
-                self.get_logger().error("Failsafe activated: communication lost! Locking steering wheel.")
+        # 起動直後の5秒間は、ノード初期化やウォッチドッグの初期フェイルセーフ期間のため警告をバイパスする
+        if now - self.node_start_time > 5.0:
+            is_disconnected = (self.odom_received and (now - self.last_odom_time > self.failsafe_timeout_sec)) or self.failsafe_active_msg
             
-            if not self.failsafe_warning_played:
-                self.play_failsafe_warning()
-                self.failsafe_warning_played = True
+            if is_disconnected:
+                if not self.failsafe_active:
+                    self.failsafe_active = True
+                    self.failsafe_warning_played = False
+                    self.get_logger().error("Failsafe activated: communication lost! Locking steering wheel.")
+                
+                if not self.failsafe_warning_played:
+                    self.play_failsafe_warning()
+                    self.failsafe_warning_played = True
 
-            self.apply_autocenter(self.failsafe_lock_autocenter)
+                self.apply_autocenter(self.failsafe_lock_autocenter)
 
-            desired_center = 0
-            desired_coeff = int(self.failsafe_lock_autocenter * 250)
-            desired_saturation = 30000
-            
-            # 補間を通さず直ちにロックする
-            self.applied_center = desired_center
-            self.applied_coeff = desired_coeff
-            self.applied_saturation = desired_saturation
-            
-            self.publish_ffb_state()
-            self.play_spring(self.applied_center)
-            return
-        else:
-            if self.failsafe_active:
-                self.failsafe_active = False
-                self.stop_failsafe_warning()
-                self.play_failsafe_recovery()
-                self.get_logger().info("Failsafe released: communication restored! Releasing steering wheel lock.")
-                self.apply_autocenter(self.idle_autocenter)
+                desired_center = 0
+                desired_coeff = int(self.failsafe_lock_autocenter * 250)
+                desired_saturation = 30000
+                
+                # 補間を通さず直ちにロックする
+                self.applied_center = desired_center
+                self.applied_coeff = desired_coeff
+                self.applied_saturation = desired_saturation
+                
+                self.publish_ffb_state()
+                self.play_spring(self.applied_center)
+                return
+            else:
+                if self.failsafe_active:
+                    self.failsafe_active = False
+                    self.stop_failsafe_warning()
+                    self.play_failsafe_recovery()
+                    self.get_logger().info("Failsafe released: communication restored! Releasing steering wheel lock.")
+                    self.apply_autocenter(self.idle_autocenter)
 
         # 旋回指令が一定時間来なければ,自律旋回終了と判断する
         if (

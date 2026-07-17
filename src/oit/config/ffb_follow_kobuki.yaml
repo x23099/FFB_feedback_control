@@ -114,7 +114,7 @@ ffb_follow_node:
     failsafe_warning_magnitude: 25000
     failsafe_warning_period_ms: 250
     failsafe_warning_duration_ms: 900
-    failsafe_lock_autocenter: 85
+    failsafe_lock_autocenter: 95
     failsafe_recovery_magnitude: 15000
     failsafe_recovery_period_ms: 12
     failsafe_recovery_duration_ms: 80
