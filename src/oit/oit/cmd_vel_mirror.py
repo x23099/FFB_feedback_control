@@ -29,8 +29,8 @@ class CmdVelMirrorNode(Node):
         self.declare_parameter('source_timeout_sec', 0.3)
 
         # AIFormula側だけ速度倍率を変えたい場合に使う.
-        self.declare_parameter('linear_scale', 1.0)
-        self.declare_parameter('angular_scale', 1.0)
+        self.declare_parameter('linear_scale', 3.0)
+        self.declare_parameter('angular_scale', 3.0)
 
         # stale時にゼロ指令を出し続ける.
         self.declare_parameter('publish_zero_when_stale', True)

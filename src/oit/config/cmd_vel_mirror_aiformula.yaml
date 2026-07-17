@@ -6,7 +6,7 @@ cmd_vel_mirror_node:
     publish_rate_hz: 20.0
     source_timeout_sec: 0.3
 
-    linear_scale: 1.0
-    angular_scale: 1.0
+    linear_scale: 4.0
+    angular_scale: 2.0
 
     publish_zero_when_stale: true
