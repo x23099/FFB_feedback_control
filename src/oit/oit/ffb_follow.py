@@ -448,6 +448,44 @@ class FfbFollowNode(Node):
             0x4000
         )
 
+        # フェイルセーフ（通信断検出）用FFB設定
+        self.declare_parameter(
+            'failsafe_timeout_sec',
+            1.0
+        )
+        self.declare_parameter(
+            'failsafe_active_topic',
+            '/failsafe/active'
+        )
+        self.declare_parameter(
+            'failsafe_warning_magnitude',
+            25000
+        )
+        self.declare_parameter(
+            'failsafe_warning_period_ms',
+            250
+        )
+        self.declare_parameter(
+            'failsafe_warning_duration_ms',
+            900
+        )
+        self.declare_parameter(
+            'failsafe_lock_autocenter',
+            85
+        )
+        self.declare_parameter(
+            'failsafe_recovery_magnitude',
+            15000
+        )
+        self.declare_parameter(
+            'failsafe_recovery_period_ms',
+            12
+        )
+        self.declare_parameter(
+            'failsafe_recovery_duration_ms',
+            80
+        )
+
         # カーブ負荷FFB
         self.declare_parameter(
             'corner_load_enabled',
@@ -919,6 +957,35 @@ class FfbFollowNode(Node):
             self.get_parameter('emergency_feedback_direction').value
         )
 
+        # フェイルセーフ（通信断検出）用パラメータの取得
+        self.failsafe_timeout_sec = float(
+            self.get_parameter('failsafe_timeout_sec').value
+        )
+        self.failsafe_active_topic = str(
+            self.get_parameter('failsafe_active_topic').value
+        )
+        self.failsafe_warning_magnitude = int(
+            self.get_parameter('failsafe_warning_magnitude').value
+        )
+        self.failsafe_warning_period_ms = int(
+            self.get_parameter('failsafe_warning_period_ms').value
+        )
+        self.failsafe_warning_duration_ms = int(
+            self.get_parameter('failsafe_warning_duration_ms').value
+        )
+        self.failsafe_lock_autocenter = int(
+            self.get_parameter('failsafe_lock_autocenter').value
+        )
+        self.failsafe_recovery_magnitude = int(
+            self.get_parameter('failsafe_recovery_magnitude').value
+        )
+        self.failsafe_recovery_period_ms = int(
+            self.get_parameter('failsafe_recovery_period_ms').value
+        )
+        self.failsafe_recovery_duration_ms = int(
+            self.get_parameter('failsafe_recovery_duration_ms').value
+        )
+
         # カーブ負荷FFB
         self.corner_load_enabled = bool(
             self.get_parameter('corner_load_enabled').value
@@ -1086,6 +1153,15 @@ class FfbFollowNode(Node):
         # /cmd_vel_autoを最後に受信した時刻
         self.last_auto_cmd_time = 0.0
 
+        # フェイルセーフ（通信断監視）用の状態変数
+        self.last_odom_time = self.get_clock().now().nanoseconds / 1e9
+        self.failsafe_active = False
+        self.failsafe_warning_played = False
+        self.failsafe_recovery_played = False
+        self.failsafe_active_msg = False
+        self.failsafe_warning_effect_id = None
+        self.failsafe_recovery_effect_id = None
+
         # 目標ハンドル角度[deg]
         self.target_handle_deg = 0.0
 
@@ -1248,6 +1324,14 @@ class FfbFollowNode(Node):
             Float32,
             self.steering_norm_topic,
             self.steering_norm_callback,
+            10
+        )
+
+        # フェイルセーフ状態の購読
+        self.create_subscription(
+            Bool,
+            self.failsafe_active_topic,
+            self.failsafe_active_callback,
             10
         )
 
@@ -1473,6 +1557,7 @@ class FfbFollowNode(Node):
         """
         odomからyawを取得し, 累積yawを更新する.
         """
+        self.last_odom_time = self.get_clock().now().nanoseconds / 1e9
         orientation = msg.pose.pose.orientation
 
         current_yaw = self.quaternion_to_yaw(
@@ -1679,6 +1764,9 @@ class FfbFollowNode(Node):
             self.get_logger().info(
                 f'Emergency stop feedback: {state_text}'
             )
+
+    def failsafe_active_callback(self, msg):
+        self.failsafe_active_msg = bool(msg.data)
 
     """
     現在のFFBモード名を返す.
@@ -2086,6 +2174,41 @@ class FfbFollowNode(Node):
         now = self.get_clock().now().nanoseconds / 1e9
 
         self.update_bump_constant_second_pulse(now)
+
+        # フェイルセーフ（通信断検出）チェック
+        is_disconnected = (now - self.last_odom_time > self.failsafe_timeout_sec) or self.failsafe_active_msg
+        
+        if is_disconnected:
+            if not self.failsafe_active:
+                self.failsafe_active = True
+                self.failsafe_warning_played = False
+                self.get_logger().error("Failsafe activated: communication lost! Locking steering wheel.")
+            
+            if not self.failsafe_warning_played:
+                self.play_failsafe_warning()
+                self.failsafe_warning_played = True
+
+            self.apply_autocenter(self.failsafe_lock_autocenter)
+
+            desired_center = 0
+            desired_coeff = int(self.failsafe_lock_autocenter * 250)
+            desired_saturation = 30000
+            
+            # 補間を通さず直ちにロックする
+            self.applied_center = desired_center
+            self.applied_coeff = desired_coeff
+            self.applied_saturation = desired_saturation
+            
+            self.publish_ffb_state()
+            self.play_spring(self.applied_center)
+            return
+        else:
+            if self.failsafe_active:
+                self.failsafe_active = False
+                self.stop_failsafe_warning()
+                self.play_failsafe_recovery()
+                self.get_logger().info("Failsafe released: communication restored! Releasing steering wheel lock.")
+                self.apply_autocenter(self.idle_autocenter)
 
         # 旋回指令が一定時間来なければ,自律旋回終了と判断する
         if (
@@ -2632,6 +2755,118 @@ class FfbFollowNode(Node):
             self.emergency_feedback_effect_id = None
 
     """
+    フェイルセーフ警告（通信断）エフェクト
+    """
+    def make_failsafe_warning_effect(self, effect_id=-1):
+        envelope = ff.Envelope(
+            0,
+            0,
+            int(self.failsafe_warning_duration_ms),
+            0
+        )
+        periodic = ff.Periodic(
+            ecodes.FF_SQUARE,
+            int(self.failsafe_warning_period_ms),
+            int(self.failsafe_warning_magnitude),
+            0,
+            0,
+            envelope,
+            0,
+            None
+        )
+        return ff.Effect(
+            ecodes.FF_PERIODIC,
+            effect_id,
+            0x4000,
+            ff.Trigger(0, 0),
+            ff.Replay(self.failsafe_warning_duration_ms, 0),
+            ff.EffectType(
+                ff_periodic_effect=periodic
+            )
+        )
+
+    def play_failsafe_warning(self):
+        try:
+            if self.failsafe_warning_effect_id is not None:
+                try:
+                    self.dev.erase_effect(self.failsafe_warning_effect_id)
+                except Exception:
+                    pass
+            effect = self.make_failsafe_warning_effect()
+            self.failsafe_warning_effect_id = self.dev.upload_effect(effect)
+            if self.failsafe_warning_effect_id is not None:
+                self.dev.write(ecodes.EV_FF, self.failsafe_warning_effect_id, 1)
+                return True
+        except Exception as e:
+            self.get_logger().warn(f'Failed to play failsafe warning: {e}')
+        return False
+
+    def stop_failsafe_warning(self):
+        if self.failsafe_warning_effect_id is not None:
+            try:
+                self.dev.write(ecodes.EV_FF, self.failsafe_warning_effect_id, 0)
+                self.dev.erase_effect(self.failsafe_warning_effect_id)
+            except Exception:
+                pass
+            self.failsafe_warning_effect_id = None
+
+    """
+    フェイルセーフ復帰エフェクト
+    """
+    def make_failsafe_recovery_effect(self, effect_id=-1):
+        envelope = ff.Envelope(
+            0,
+            0,
+            int(self.failsafe_recovery_duration_ms),
+            0
+        )
+        periodic = ff.Periodic(
+            ecodes.FF_SQUARE,
+            int(self.failsafe_recovery_period_ms),
+            int(self.failsafe_recovery_magnitude),
+            0,
+            0,
+            envelope,
+            0,
+            None
+        )
+        return ff.Effect(
+            ecodes.FF_PERIODIC,
+            effect_id,
+            0x4000,
+            ff.Trigger(0, 0),
+            ff.Replay(self.failsafe_recovery_duration_ms, 0),
+            ff.EffectType(
+                ff_periodic_effect=periodic
+            )
+        )
+
+    def play_failsafe_recovery(self):
+        try:
+            if self.failsafe_recovery_effect_id is not None:
+                try:
+                    self.dev.erase_effect(self.failsafe_recovery_effect_id)
+                except Exception:
+                    pass
+            effect = self.make_failsafe_recovery_effect()
+            self.failsafe_recovery_effect_id = self.dev.upload_effect(effect)
+            if self.failsafe_recovery_effect_id is not None:
+                self.dev.write(ecodes.EV_FF, self.failsafe_recovery_effect_id, 1)
+                return True
+        except Exception as e:
+            self.get_logger().warn(f'Failed to play failsafe recovery: {e}')
+        return False
+
+    def stop_failsafe_recovery(self):
+        if self.failsafe_recovery_effect_id is not None:
+            try:
+                self.dev.write(ecodes.EV_FF, self.failsafe_recovery_effect_id, 0)
+                self.dev.erase_effect(self.failsafe_recovery_effect_id)
+            except Exception:
+                pass
+            self.failsafe_recovery_effect_id = None
+
+    """
     段差Rumbleエフェクト
     """
     def make_bump_rumble_effect(self, weak, strong, effect_id=-1):
@@ -3085,6 +3320,8 @@ class FfbFollowNode(Node):
         self.stop_bump_constant()
         self.stop_bump_periodic()
         self.stop_emergency_feedback()
+        self.stop_failsafe_warning()
+        self.stop_failsafe_recovery()
 
         self.set_autocenter(
             self.shutdown_autocenter

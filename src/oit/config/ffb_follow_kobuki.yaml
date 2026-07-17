@@ -108,6 +108,17 @@ ffb_follow_node:
     emergency_feedback_duration_ms: 120
     emergency_feedback_direction: 16384
 
+    # フェイルセーフ（通信断検出）用FFB設定
+    failsafe_timeout_sec: 1.0
+    failsafe_active_topic: /failsafe/active
+    failsafe_warning_magnitude: 25000
+    failsafe_warning_period_ms: 250
+    failsafe_warning_duration_ms: 900
+    failsafe_lock_autocenter: 85
+    failsafe_recovery_magnitude: 15000
+    failsafe_recovery_period_ms: 12
+    failsafe_recovery_duration_ms: 80
+
     # カーブ負荷FFB
     corner_load_enabled: true
     corner_load_reference: 0.20
