@@ -450,6 +450,10 @@ class FfbFollowNode(Node):
 
         # フェイルセーフ（通信断検出）用FFB設定
         self.declare_parameter(
+            'failsafe_vibration_enabled',
+            True
+        )
+        self.declare_parameter(
             'failsafe_timeout_sec',
             1.0
         )
@@ -958,6 +962,9 @@ class FfbFollowNode(Node):
         )
 
         # フェイルセーフ（通信断検出）用パラメータの取得
+        self.failsafe_vibration_enabled = bool(
+            self.get_parameter('failsafe_vibration_enabled').value
+        )
         self.failsafe_timeout_sec = float(
             self.get_parameter('failsafe_timeout_sec').value
         )
@@ -2187,7 +2194,7 @@ class FfbFollowNode(Node):
                     self.failsafe_warning_played = False
                     self.get_logger().error("Failsafe activated: communication lost! Locking steering wheel.")
                 
-                if not self.failsafe_warning_played:
+                if self.failsafe_vibration_enabled and not self.failsafe_warning_played:
                     self.play_failsafe_warning()
                     self.failsafe_warning_played = True
 
@@ -2209,7 +2216,8 @@ class FfbFollowNode(Node):
                 if self.failsafe_active:
                     self.failsafe_active = False
                     self.stop_failsafe_warning()
-                    self.play_failsafe_recovery()
+                    if self.failsafe_vibration_enabled:
+                        self.play_failsafe_recovery()
                     self.get_logger().info("Failsafe released: communication restored! Releasing steering wheel lock.")
                     self.apply_autocenter(self.idle_autocenter)
 

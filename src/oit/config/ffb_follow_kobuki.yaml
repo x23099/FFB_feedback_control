@@ -109,6 +109,7 @@ ffb_follow_node:
     emergency_feedback_direction: 16384
 
     # フェイルセーフ（通信断検出）用FFB設定
+    failsafe_vibration_enabled: false
     failsafe_timeout_sec: 1.0
     failsafe_active_topic: /failsafe/active
     failsafe_warning_magnitude: 25000
