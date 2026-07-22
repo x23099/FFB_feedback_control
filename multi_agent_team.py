@@ -2,8 +2,8 @@
 import urllib.request
 import json
 import sys
-import threading
 import time
+import os
 
 # --- 設定値 ---
 LOCAL_BRIDGE_URL = "http://localhost:11435/v1/chat/completions"
@@ -21,25 +21,45 @@ COLOR_FRONT = "\033[1;32m"     # 太字緑
 COLOR_BACK = "\033[1;33m"      # 太字黄
 COLOR_QA = "\033[1;35m"        # 太字マゼンタ
 COLOR_SYSTEM = "\033[1;36m"    # 太字シアン
+COLOR_USER = "\033[1;37m"      # 太字白
 
-def print_log(sender, message, color):
-    """色付きでタイムラインログを表示する"""
+# --- ログディレクトリの設定 ---
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+def reset_logs():
+    """ログファイルをリセット・初期化する"""
+    for agent in ["manager", "frontend", "backend", "qa", "system"]:
+        filepath = os.path.join(LOG_DIR, f"{agent}.log")
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(f"=== {agent.upper()} AGENT LOG ===\n\n")
+
+def write_agent_log(agent_key, sender, message):
+    """指定されたエージェントのログファイルへ追記出力する"""
+    filepath = os.path.join(LOG_DIR, f"{agent_key}.log")
+    timestamp = time.strftime("%H:%M:%S")
+    with open(filepath, "a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] {sender}:\n")
+        for line in message.strip().split('\n'):
+            f.write(f"  {line}\n")
+        f.write("\n" + "-"*50 + "\n\n")
+        f.flush()
+
+def print_log(sender, message, color, agent_key="system"):
+    """色付きでコンソール表示し、同時に該当ログファイルへ記録する"""
     timestamp = time.strftime("%H:%M:%S")
     print(f"{color}[{timestamp}] {sender}:{COLOR_RESET}")
-    # インデントして表示
     for line in message.strip().split('\n'):
         print(f"  {line}")
     print()
+    write_agent_log(agent_key, sender, message)
 
-def call_bridge(model, system_prompt, user_prompt, temperature=0.7, retries=3):
-    """ag-local-bridgeのOpenAI互換エンドポイントを呼び出す (429エラー自動リトライ付き)"""
+def call_bridge_messages(model, messages, temperature=0.7, retries=3):
+    """ag-local-bridgeのエンドポイントに会話履歴(messages)配列を送信する"""
     headers = {"Content-Type": "application/json"}
     data = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
+        "messages": messages,
         "temperature": temperature
     }
     
@@ -66,136 +86,241 @@ def call_bridge(model, system_prompt, user_prompt, temperature=0.7, retries=3):
                 continue
             return f"エラーが発生しました: {e}\n(Antigravity Local Bridgeが起動していて、ポート11435が有効か確認してください)"
 
-def run_multi_agent_team(user_requirement):
-    conversation_logs = []
-    
-    print_log("SYSTEM", f"6層/4人体制マルチエージェントを起動します。\n接続先: {LOCAL_BRIDGE_URL}\n要求定義:\n{user_requirement}", COLOR_SYSTEM)
-    
-    # ==========================================
-    # 1. マネージャーの初期分析・基本案と代替案の提示
-    # ==========================================
-    manager_sys = (
-        "あなたは開発プロジェクトの統括マネージャーです。ユーザーの要件を分析し、考慮漏れを指摘してください。\n"
-        "【重要】ユーザーの要求通りに実装する「基本案」だけでなく、ユーザーが思いつかないような「別角度から課題を解決する代替案（別アプローチ）」を必ず1つ提案してください。\n"
-        "その後、フロントエンド、バックエンド、QAの3名に対して、基本案と代替案の両方の視点から議論し、QAが意見を取りまとめるよう指示を出してください。"
-    )
-    
-    manager_prompt = f"ユーザーの要件:\n{user_requirement}"
-    
-    print(f"{COLOR_SYSTEM}[1/4] マネージャーが要件を分析し、方針を策定中...{COLOR_RESET}")
-    manager_instruction = call_bridge(MODEL_MANAGER, manager_sys, manager_prompt)
-    print_log("マネージャー (Manager)", manager_instruction, COLOR_MANAGER)
-    conversation_logs.append(("Manager (初期指示)", manager_instruction))
-    
-    # ==========================================
-    # 2. エンジニア（フロント ＆ バック）の順次設計
-    # ==========================================
-    front_sys = (
-        "あなたはフロントエンドエンジニアです。マネージャーの指示（基本案・代替案）を確認し、\n"
-        "UI/UX設計、画面遷移、フロントエンド実装方針を検討してください。"
-    )
-    back_sys = (
-        "あなたはバックエンドエンジニアです。マネージャーの指示（基本案・代替案）を確認し、\n"
-        "データベース設計、API設計、バックエンドおよびロジック実装方針を検討してください。"
-    )
-    
-    print(f"{COLOR_SYSTEM}  - フロントエンドエンジニアが設計中...{COLOR_RESET}")
-    time.sleep(2)
-    front_output = call_bridge(MODEL_FRONTEND, front_sys, manager_instruction)
-    print_log("フロントエンド (Front-end)", front_output, COLOR_FRONT)
-    conversation_logs.append(("Front-end (設計)", front_output))
-    
-    print(f"{COLOR_SYSTEM}  - バックエンドエンジニアが設計中...{COLOR_RESET}")
-    time.sleep(2)
-    back_output = call_bridge(MODEL_BACKEND, back_sys, manager_instruction)
-    print_log("バックエンド (Back-end)", back_output, COLOR_BACK)
-    conversation_logs.append(("Back-end (設計)", back_output))
-    
-    # ==========================================
-    # 3. QAによる検証・取りまとめ・最終確認
-    # ==========================================
-    qa_sys = (
-        "あなたは品質保証(QA)エンジニアです。フロントエンドとバックエンドの設計案をレビューし、\n"
-        "バグ、セキュリティ脆弱性、論理的矛盾、要件漏れがないか検証してください。\n"
-        "【重要】報告前に、フロントエンドとバックエンドに対して、追加情報や懸念事項がないか最終確認を促してください。\n"
-        "その後、3人の意見を一つに要約・圧縮した最終的な結論レポートを作成し、マネージャーへ報告してください。"
-    )
-    
-    qa_prompt = (
-        f"フロントエンド設計案:\n{front_output}\n\n"
-        f"バックエンド設計案:\n{back_output}\n\n"
-        "エンジニアチーム全体への最終確認（追加情報がないか）も含めて、結論をまとめてマネージャーへ報告してください。"
-    )
-    
-    print(f"{COLOR_SYSTEM}[2/4] QAが設計を検証し、意見を取りまとめ中...{COLOR_RESET}")
-    time.sleep(2)
-    qa_report = call_bridge(MODEL_QA, qa_sys, qa_prompt)
-    print_log("QAエンジニア (QA)", qa_report, COLOR_QA)
-    conversation_logs.append(("QA (要約・検証報告)", qa_report))
-    
-    # ==========================================
-    # 4. マネージャーの最終レビューと報告
-    # ==========================================
-    manager_final_sys = (
-        "あなたは開発プロジェクトの統括マネージャーです。QAから提出された最終仕様レポートを確認し、\n"
-        "考慮漏れや矛盾がないか最終確認してください。\n"
-        "問題がなければ、基本案と代替案のメリット・デメリットを整理した上で、最終的な要件定義・設計方針およびコードの構成案をユーザーへ報告してください。"
-    )
-    
-    manager_final_prompt = f"QAからのレポート:\n{qa_report}"
-    
-    print(f"{COLOR_SYSTEM}[3/4] マネージャーが最終レビューを実行中...{COLOR_RESET}")
-    time.sleep(2)
-    final_output = call_bridge(MODEL_MANAGER, manager_final_sys, manager_final_prompt)
-    print_log("マネージャー (最終報告)", final_output, COLOR_MANAGER)
-    conversation_logs.append(("Manager (最終報告)", final_output))
-    
-    # ==========================================
-    # 結果の保存とMarkdown出力
-    # ==========================================
-    print_log("SYSTEM", "マルチエージェントセッションが終了しました。結果を出力します。", COLOR_SYSTEM)
-    
-    # Markdown形式のレポートを生成
-    markdown_report = f"""# 4人体制マルチエージェント 開発設計書
+def call_bridge(model, system_prompt, user_prompt, temperature=0.7, retries=3):
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+    return call_bridge_messages(model, messages, temperature, retries)
 
-## 👑 マネージャーによる最終結論
-{final_output}
+def parse_manager_response(response_text):
+    """マネージャーの返答からJSON部分を抽出してパースする"""
+    try:
+        cleaned = response_text.strip()
+        if "```json" in cleaned:
+            cleaned = cleaned.split("```json")[1].split("```")[0].strip()
+        elif "```" in cleaned:
+            cleaned = cleaned.split("```")[1].split("```")[0].strip()
+        return json.loads(cleaned)
+    except Exception:
+        return {
+            "is_plan_complete": False,
+            "summary": "会話から要件を整理中...",
+            "question": response_text,
+            "options": [
+                "1. 上記の提案内容で進める",
+                "2. 別の代替案を提示してほしい"
+            ],
+            "final_plan": ""
+        }
+
+def manager_user_discussion_phase(initial_requirement):
+    """フェーズ1: マネージャーとユーザーの対話型計画策定"""
+    print_log("SYSTEM", f"【フェーズ1】マネージャーとの対話を開始します。\n初期要求:\n{initial_requirement}", COLOR_SYSTEM, "system")
+    
+    system_prompt = (
+        "あなたは開発プロジェクトの統括マネージャーです。ユーザーから提出された要件をもとに、ユーザーと対話して高精度な開発計画書を作成します。\n\n"
+        "【対話のルール】\n"
+        "1. 計画を確定させるために必要な不明点・仕様の決定事項について、1回につき1〜2つの明確な質問を行ってください。\n"
+        "2. 質問には必ずいくつかの選択肢（例: 1, 2, 3...）を添えてください。選択肢以外にもユーザーが自由に文章入力（Other）できるよう考慮した質問にしてください。\n"
+        "3. ユーザーと十分に議論が交わされ、計画が完全に完成したと判断した場合のみ `is_plan_complete: true` にし、`final_plan` に詳細な開発計画書を記述してください。\n"
+        "4. 必ず以下の純粋なJSONフォーマットのみを出力してください。\n\n"
+        "【出力JSONフォーマット】\n"
+        "{\n"
+        '  "is_plan_complete": false,\n'
+        '  "summary": "これまでの決定事項・要件の要約",\n'
+        '  "question": "ユーザーへの質問本文",\n'
+        '  "options": [\n'
+        '    "1. 選択肢Aの説明",\n'
+        '    "2. 選択肢Bの説明"\n'
+        "  ],\n"
+        '  "final_plan": "" // is_plan_completeが true の場合のみ、完成した詳細開発計画書をここに記入\n'
+        "}"
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"初期要件:\n{initial_requirement}"}
+    ]
+
+    while True:
+        raw_res = call_bridge_messages(MODEL_MANAGER, messages)
+        data = parse_manager_response(raw_res)
+
+        # 計画完了の判定
+        if data.get("is_plan_complete", False):
+            final_plan = data.get("final_plan", raw_res)
+            print_log("SYSTEM", "==================== 高精度開発計画書 (案) ====================", COLOR_SYSTEM, "system")
+            print(f"{COLOR_MANAGER}{final_plan}{COLOR_RESET}\n")
+            write_agent_log("manager", "Manager (高精度開発計画書)", final_plan)
+            print_log("SYSTEM", "==================================================================", COLOR_SYSTEM, "system")
+            
+            # ユーザーへの承認確認
+            print_log("マネージャー", "上記の内容で開発計画書を作成いたしました。エンジニアチームへ引き継いで実装を開始してよろしいでしょうか？", COLOR_MANAGER, "manager")
+            print(f"{COLOR_SYSTEM}[y / yes]: 承認して実装を開始する{COLOR_RESET}")
+            print(f"{COLOR_SYSTEM}[修正内容を入力]: 計画書を再調整・修正する{COLOR_RESET}\n")
+            
+            try:
+                confirm = input(f"{COLOR_USER}承認確認 (y / 修正指示) > {COLOR_RESET}").strip()
+            except (KeyboardInterrupt, EOFError):
+                confirm = "y"
+
+            if confirm.lower() in ["y", "yes", "ok", "承認", ""]:
+                print_log("SYSTEM", "✅ ユーザーの承認を得ました。エンジニアチームへ引き継ぎます。", COLOR_SYSTEM, "system")
+                return final_plan
+            else:
+                print_log("SYSTEM", "🔄 修正指示を受け付けました。マネージャーが計画を再調整します。", COLOR_SYSTEM, "system")
+                messages.append({"role": "assistant", "content": raw_res})
+                messages.append({"role": "user", "content": f"計画書の修正指示: {confirm}"})
+                continue
+
+        # マネージャーからの質問表示
+        summary = data.get("summary", "")
+        question = data.get("question", "")
+        options = data.get("options", [])
+
+        if summary:
+            print_log("マネージャー (要約)", summary, COLOR_MANAGER, "manager")
+        
+        msg_content = question
+        if options:
+            msg_content += "\n\n【選択肢】\n" + "\n".join(options) + "\n※ 番号を選択するか、自由に入力(Other)してください。"
+        
+        print_log("マネージャー (質問)", msg_content, COLOR_MANAGER, "manager")
+
+        # ユーザー回答受付
+        try:
+            user_input = input(f"{COLOR_USER}あなた (回答を入力) > {COLOR_RESET}").strip()
+        except (KeyboardInterrupt, EOFError):
+            user_input = "1"
+
+        if not user_input:
+            user_input = "1 (デフォルト選択)"
+
+        messages.append({"role": "assistant", "content": raw_res})
+        messages.append({"role": "user", "content": f"ユーザーの回答: {user_input}"})
+
+
+def engineering_and_qa_phase(final_plan):
+    """フェーズ2: エンジニアによるコード設計・製作およびQAデバッグ・検証"""
+    print_log("SYSTEM", "【フェーズ2】確定した計画書をもとにエンジニアとQAチームが実装・検証を開始します。", COLOR_SYSTEM, "system")
+    conversation_logs = []
+
+    # 1. フロントエンド実装設計
+    front_sys = (
+        "あなたはフロントエンドエンジニアです。確定した開発計画書をもとに、\n"
+        "UI/UX構造、コンポーネント構成、フロントエンドの具体的な実装コード（Python/HTML/JS等）およびコード解説を作成してください。"
+    )
+    print(f"{COLOR_SYSTEM}  - [1/3] フロントエンドエンジニアがコード・設計を作成中...{COLOR_RESET}")
+    front_output = call_bridge(MODEL_FRONTEND, front_sys, f"確定計画書:\n{final_plan}")
+    print_log("フロントエンド (Front-end)", front_output, COLOR_FRONT, "frontend")
+    conversation_logs.append(("Front-end (コード・設計)", front_output))
+
+    # 2. バックエンド実装設計
+    back_sys = (
+        "あなたはバックエンドエンジニアです。確定した開発計画書をもとに、\n"
+        "システムロジック、データ構造、API、バックエンドの具体的な実装コード（Python等）およびコード解説を作成してください。"
+    )
+    print(f"{COLOR_SYSTEM}  - [2/3] バックエンドエンジニアがコード・設計を作成中...{COLOR_RESET}")
+    back_output = call_bridge(MODEL_BACKEND, back_sys, f"確定計画書:\n{final_plan}")
+    print_log("バックエンド (Back-end)", back_output, COLOR_BACK, "backend")
+    conversation_logs.append(("Back-end (コード・設計)", back_output))
+
+    # 3. QAデバッグ・セキュリティ検証
+    qa_sys = (
+        "あなたは品質保証(QA)およびデバッグ専門エンジニアです。\n"
+        "フロントエンドとバックエンドのコード・設計案を深くレビューし、\n"
+        "1. バグやエッジケースでの不具合\n"
+        "2. セキュリティ上の脆弱性\n"
+        "3. ２つのコード間の接続・ロジックの不整合\n"
+        "を検証し、具体的な修正コード・デバッグアドバイスを含めた検証報告書を作成してください。"
+    )
+    qa_prompt = (
+        f"確定開発計画書:\n{final_plan}\n\n"
+        f"フロントエンド実装:\n{front_output}\n\n"
+        f"バックエンド実装:\n{back_output}"
+    )
+    print(f"{COLOR_SYSTEM}  - [3/3] QAエンジニアがコードを検証・デバッグ中...{COLOR_RESET}")
+    qa_report = call_bridge(MODEL_QA, qa_sys, qa_prompt)
+    print_log("QAエンジニア (QA)", qa_report, COLOR_QA, "qa")
+    conversation_logs.append(("QA (デバッグ・検証報告)", qa_report))
+
+    # 4. マネージャーによる最終統括
+    manager_sys = (
+        "あなたは統括マネージャーです。エンジニアのコードとQAの検証結果を確認し、\n"
+        "最終的な納品用レポートとして全体の成果物（確定仕様、完成コード、QA検証結果、今後の運用方針）をきれいにまとめてください。"
+    )
+    manager_prompt = f"計画書:\n{final_plan}\n\nQA統合レポート:\n{qa_report}"
+    print(f"{COLOR_SYSTEM}マネージャーが最終納品レポートを作成中...{COLOR_RESET}")
+    final_output = call_bridge(MODEL_MANAGER, manager_sys, manager_prompt)
+    print_log("マネージャー (最終総括)", final_output, COLOR_MANAGER, "manager")
+
+    # 成果物の書き出し
+    report_md = f"""# インタラクティブ開発マルチエージェント 成果物レポート
+
+## 👑 確定開発計画書 (マネージャー & ユーザー合意)
+{final_plan}
 
 ---
-<details>
-<summary>💬 4人体制チームのリアルタイム対話ログを表示</summary>
 
-### 👑 1. マネージャーの初期分析 & 指示
-{manager_instruction}
-
-### 🎨 2. フロントエンドの設計方針
+## 🎨 フロントエンド実装・設計
 {front_output}
 
-### ⚙️ 3. バックエンドの設計方針
+---
+
+## ⚙️ バックエンド実装・設計
 {back_output}
 
-### 🔍 4. QAによる検証 & 統合報告
+---
+
+## 🔍 QA検証・デバッグレポート
 {qa_report}
 
-</details>
-"""
-    return markdown_report
+---
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        # デフォルトのテスト用要求定義
-        requirement = (
-            "ROS 2とPythonを使用して、Kobukiロボットを安全に追従走行させる制御ノードを作成したい。\n"
-            "急な障害物を検知した際は緊急停止し、操舵ホイール（ステアリング）に振動フィードバックを送る仕様にする。"
-        )
-    else:
-        requirement = sys.argv[1]
-        
-    report = run_multi_agent_team(requirement)
+## 🏆 最終総括
+{final_output}
+"""
+    return report_md
+
+def run_multi_agent_team(initial_requirement):
+    # フェーズ1: 対話による計画策定（承認確認付き）
+    final_plan = manager_user_discussion_phase(initial_requirement)
     
-    # 結果をMarkdownファイルとして保存
+    # フェーズ2: コード制作 & QA検証
+    report_md = engineering_and_qa_phase(final_plan)
+    
     output_file = "multi_agent_output.md"
     with open(output_file, "w", encoding="utf-8") as f:
-        f.write(report)
+        f.write(report_md)
+    print_log("SYSTEM", f"一連の処理が完了しました。成果物レポートを `{output_file}` に保存しました。", COLOR_SYSTEM, "system")
+    return report_md
+
+if __name__ == "__main__":
+    reset_logs()
+    print_log("SYSTEM", "マルチエージェント開発システムを開始します。（終了するには 'exit' または 'quit' と入力）", COLOR_SYSTEM, "system")
+    
+    first_run = True
+    while True:
+        if first_run and len(sys.argv) >= 2:
+            requirement = " ".join(sys.argv[1:])
+            first_run = False
+        else:
+            first_run = False
+            print_log("SYSTEM", "プロンプト（要件・追加指示・修正リクエスト等）を入力してください。", COLOR_SYSTEM, "system")
+            try:
+                requirement = input(f"{COLOR_USER}プロンプト (exitで終了) > {COLOR_RESET}").strip()
+            except (KeyboardInterrupt, EOFError):
+                print("\nシステムを終了します。")
+                sys.exit(0)
+                
+            if not requirement:
+                continue
+                
+            if requirement.lower() in ["exit", "quit"]:
+                print_log("SYSTEM", "システムを終了しました。お疲れ様でした！", COLOR_SYSTEM, "system")
+                sys.exit(0)
         
-    print(f"{COLOR_SYSTEM}最終レポートを '{output_file}' に保存しました。{COLOR_RESET}")
+        # マルチエージェントフロー実行
+        run_multi_agent_team(requirement)
+        print("\n" + "="*70 + "\n")

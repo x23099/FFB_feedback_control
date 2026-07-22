@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Epic Hello World in Space</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Three.js & GSAP CDN (グローバル読み込みでモジュール・外部通信エラーを回避) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+</head>
+<body>
+  <!-- 3Dレンダリング用のキャンバス -->
+  <canvas id="webgl-canvas"></canvas>
+
+  <!-- ローディング画面 -->
+  <div id="loader">
+    <div class="loader-content">
+      <div class="spinner"></div>
+      <p>Initializing Space...</p>
+    </div>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>
