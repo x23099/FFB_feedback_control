@@ -8,11 +8,11 @@ import time
 # --- 設定値 ---
 LOCAL_BRIDGE_URL = "http://localhost:11435/v1/chat/completions"
 
-# 物理モデルの定義 (ag-local-bridgeが提供するエイリアスを使用)
-MODEL_MANAGER = "antigravity-gemini-3.1-pro-high"  # マネージャー (高推論)
-MODEL_FRONTEND = "antigravity-gemini-3-flash"      # フロントエンド (高速)
-MODEL_BACKEND = "antigravity-gemini-3-flash"       # バックエンド (高速)
-MODEL_QA = "antigravity-gemini-3.1-pro-high"       # QA (高推論)
+# 物理モデルの定義 (実際に選択画面に存在する正式なモデルID)
+MODEL_MANAGER = "antigravity-gemini-3.1-pro-high"         # マネージャー (実在する最高性能 Gemini Pro)
+MODEL_FRONTEND = "antigravity-gemini-3-flash"              # フロントエンド (実在する Gemini Flash)
+MODEL_BACKEND = "antigravity-gemini-3.1-pro-high"         # バックエンド (実在する最高性能 Gemini Pro)
+MODEL_QA = "antigravity-claude-opus-4-6-thinking"         # QA (実在する最強検証モデル Claude Opus Thinking)
 
 # コンソール色出力用のANSIエスケープシーケンス
 COLOR_RESET = "\033[0m"
@@ -31,8 +31,8 @@ def print_log(sender, message, color):
         print(f"  {line}")
     print()
 
-def call_bridge(model, system_prompt, user_prompt, temperature=0.7):
-    """ag-local-bridgeのOpenAI互換エンドポイントを呼び出す (標準ライブラリのみ使用)"""
+def call_bridge(model, system_prompt, user_prompt, temperature=0.7, retries=3):
+    """ag-local-bridgeのOpenAI互換エンドポイントを呼び出す (429エラー自動リトライ付き)"""
     headers = {"Content-Type": "application/json"}
     data = {
         "model": model,
@@ -43,19 +43,28 @@ def call_bridge(model, system_prompt, user_prompt, temperature=0.7):
         "temperature": temperature
     }
     
-    req = urllib.request.Request(
-        LOCAL_BRIDGE_URL,
-        data=json.dumps(data).encode('utf-8'),
-        headers=headers,
-        method='POST'
-    )
-    
-    try:
-        with urllib.request.urlopen(req, timeout=300) as response:
-            res_data = json.loads(response.read().decode('utf-8'))
-            return res_data['choices'][0]['message']['content']
-    except Exception as e:
-        return f"エラーが発生しました: {e}\n(Antigravity Local Bridgeが起動していて、ポート11435が有効か確認してください)"
+    for attempt in range(retries):
+        req = urllib.request.Request(
+            LOCAL_BRIDGE_URL,
+            data=json.dumps(data).encode('utf-8'),
+            headers=headers,
+            method='POST'
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=300) as response:
+                res_data = json.loads(response.read().decode('utf-8'))
+                return res_data['choices'][0]['message']['content']
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < retries - 1:
+                wait_time = (attempt + 1) * 3
+                time.sleep(wait_time)
+                continue
+            return f"HTTPエラーが発生しました: {e.code} - {e.reason}"
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(2)
+                continue
+            return f"エラーが発生しました: {e}\n(Antigravity Local Bridgeが起動していて、ポート11435が有効か確認してください)"
 
 def run_multi_agent_team(user_requirement):
     conversation_logs = []
@@ -79,7 +88,7 @@ def run_multi_agent_team(user_requirement):
     conversation_logs.append(("Manager (初期指示)", manager_instruction))
     
     # ==========================================
-    # 2. エンジニア（フロント ＆ バック）の並行設計
+    # 2. エンジニア（フロント ＆ バック）の順次設計
     # ==========================================
     front_sys = (
         "あなたはフロントエンドエンジニアです。マネージャーの指示（基本案・代替案）を確認し、\n"
@@ -90,29 +99,17 @@ def run_multi_agent_team(user_requirement):
         "データベース設計、API設計、バックエンドおよびロジック実装方針を検討してください。"
     )
     
-    front_result = [None]
-    back_result = [None]
+    print(f"{COLOR_SYSTEM}  - フロントエンドエンジニアが設計中...{COLOR_RESET}")
+    time.sleep(2)
+    front_output = call_bridge(MODEL_FRONTEND, front_sys, manager_instruction)
+    print_log("フロントエンド (Front-end)", front_output, COLOR_FRONT)
+    conversation_logs.append(("Front-end (設計)", front_output))
     
-    def run_front():
-        print(f"{COLOR_SYSTEM}  - フロントエンドエンジニアが設計中...{COLOR_RESET}")
-        front_result[0] = call_bridge(MODEL_FRONTEND, front_sys, manager_instruction)
-        
-    def run_back():
-        print(f"{COLOR_SYSTEM}  - バックエンドエンジニアが設計中...{COLOR_RESET}")
-        back_result[0] = call_bridge(MODEL_BACKEND, back_sys, manager_instruction)
-        
-    # スレッドによる並行処理 (アプローチ④)
-    t1 = threading.Thread(target=run_front)
-    t2 = threading.Thread(target=run_back)
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
-    
-    print_log("フロントエンド (Front-end)", front_result[0], COLOR_FRONT)
-    print_log("バックエンド (Back-end)", back_result[0], COLOR_BACK)
-    conversation_logs.append(("Front-end (設計)", front_result[0]))
-    conversation_logs.append(("Back-end (設計)", back_result[0]))
+    print(f"{COLOR_SYSTEM}  - バックエンドエンジニアが設計中...{COLOR_RESET}")
+    time.sleep(2)
+    back_output = call_bridge(MODEL_BACKEND, back_sys, manager_instruction)
+    print_log("バックエンド (Back-end)", back_output, COLOR_BACK)
+    conversation_logs.append(("Back-end (設計)", back_output))
     
     # ==========================================
     # 3. QAによる検証・取りまとめ・最終確認
@@ -125,12 +122,13 @@ def run_multi_agent_team(user_requirement):
     )
     
     qa_prompt = (
-        f"フロントエンド設計案:\n{front_result[0]}\n\n"
-        f"バックエンド設計案:\n{back_result[0]}\n\n"
+        f"フロントエンド設計案:\n{front_output}\n\n"
+        f"バックエンド設計案:\n{back_output}\n\n"
         "エンジニアチーム全体への最終確認（追加情報がないか）も含めて、結論をまとめてマネージャーへ報告してください。"
     )
     
     print(f"{COLOR_SYSTEM}[2/4] QAが設計を検証し、意見を取りまとめ中...{COLOR_RESET}")
+    time.sleep(2)
     qa_report = call_bridge(MODEL_QA, qa_sys, qa_prompt)
     print_log("QAエンジニア (QA)", qa_report, COLOR_QA)
     conversation_logs.append(("QA (要約・検証報告)", qa_report))
@@ -147,6 +145,7 @@ def run_multi_agent_team(user_requirement):
     manager_final_prompt = f"QAからのレポート:\n{qa_report}"
     
     print(f"{COLOR_SYSTEM}[3/4] マネージャーが最終レビューを実行中...{COLOR_RESET}")
+    time.sleep(2)
     final_output = call_bridge(MODEL_MANAGER, manager_final_sys, manager_final_prompt)
     print_log("マネージャー (最終報告)", final_output, COLOR_MANAGER)
     conversation_logs.append(("Manager (最終報告)", final_output))
@@ -170,10 +169,10 @@ def run_multi_agent_team(user_requirement):
 {manager_instruction}
 
 ### 🎨 2. フロントエンドの設計方針
-{front_result[0]}
+{front_output}
 
 ### ⚙️ 3. バックエンドの設計方針
-{back_result[0]}
+{back_output}
 
 ### 🔍 4. QAによる検証 & 統合報告
 {qa_report}
