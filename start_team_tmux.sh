@@ -27,7 +27,7 @@ SESSION_NAME="multi-agent"
 tmux kill-session -t "${SESSION_NAME}" 2>/dev/null
 
 # 2. メインのtmuxセッションを作成 (左ペイン: python3 multi_agent_team.py)
-tmux new-session -d -s "${SESSION_NAME}" -c "${SCRIPT_DIR}" "python3 multi_agent_team.py"
+tmux new-session -d -s "${SESSION_NAME}" -c "${SCRIPT_DIR}" "python3 multi_agent_team.py; exec bash"
 
 # 3. 画面を左右に分割 (左60%, 右40%)
 tmux split-window -h -t "${SESSION_NAME}:0.0" -p 40 -c "${SCRIPT_DIR}" "tail -n 30 -f logs/frontend.log"
@@ -45,6 +45,9 @@ tmux select-pane -t "${SESSION_NAME}:0.3" -T "QA Log"
 # ペインの枠線にタイトルを表示する設定
 tmux set-option -t "${SESSION_NAME}" pane-border-status top
 tmux set-option -t "${SESSION_NAME}" pane-border-format "#[fg=cyan,bold] [ #{pane_title} ] #[default]"
+
+# マウススクロール有効化 (マウスホイールでログ履歴をスクロール可能にする)
+tmux set-option -t "${SESSION_NAME}" mouse on
 
 # 左ペイン（メイン操作）にフォーカスを当てる
 tmux select-pane -t "${SESSION_NAME}:0.0"
