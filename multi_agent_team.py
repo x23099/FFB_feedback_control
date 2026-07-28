@@ -9,6 +9,10 @@ import re
 # --- 設定値 ---
 LOCAL_BRIDGE_URL = "http://localhost:11435/v1/chat/completions"
 
+from local_llm_bridge import LocalLLMBridge
+local_bridge = LocalLLMBridge()
+
+
 # 物理モデルの定義 (Google × Anthropic 異種マルチエージェント構成)
 MODEL_MANAGER = "gemini-3.6-flash-medium"          # マネージャー (Gemini 3.6 Flash Medium)
 MODEL_FRONTEND = "gemini-3.6-flash-low"             # フロントエンド (Gemini 3.6 Flash Low)
