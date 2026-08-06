@@ -9,6 +9,133 @@
 * [`docs/architecture.html`](docs/architecture.html): フロー選択、経路強調、検索、ズームに対応したインタラクティブ構成図
 * [`docs/architecture.json`](docs/architecture.json): AIエージェント向けのノード、接続、フロー、デプロイ情報
 
+### 他のワークスペースで構成図を作る
+
+`architecture.html` は単体で動作する汎用ビューアである。Python 3で対象ワークスペースを走査し、読み込み用JSONのたたき台を生成できる。外部パッケージは不要。`src`だけではlaunch、設定、複数パッケージ間の情報を取得できないため、通常はリポジトリまたはワークスペースの大元を指定する。
+
+```bash
+python3 tools/generate_architecture.py /path/to/workspace \
+  --output architecture.generated.json
+```
+
+生成後、`docs/architecture.html` をブラウザで開き、「JSONを開く」から生成したファイルを選択する。JSONを画面へドラッグ＆ドロップしてもよい。「JSON保存」では、現在読み込んでいるデータを再度JSONとして保存できる。
+
+配布先では、次の2ファイルがあれば利用できる。
+
+* `docs/architecture.html`: ビューア。ブラウザで直接開ける
+* `tools/generate_architecture.py`: 任意のワークスペースからJSONを生成するツール
+
+生成ツールは主要なソース、manifest、設定、ドキュメント、内部import、ROS 2 launchの起動関係を検出する。ROS 2の`create_publisher`と`create_subscription`は、topicが文字列または文字列の既定パラメーターとして記述されていれば接続線を生成する。バックアップ名（`old`、`bak`、`backup`、`copy`）のファイルは既定で除外する。
+
+色はROSパッケージ／大元フォルダと、Source、Control、Sensing、Runtime、Configurationなどの役割を組み合わせて決定する。配置は接続されたコンポーネントを同じ帯にまとめ、依存元から依存先へ並べる。実行時に動的に決まるtopic、外部サービス、業務上重要なフローはコードだけでは確定できないため、生成後のJSONに任意で追記する。
+
+ビューアは「接続あり」と「独立ファイル」を別タブで表示する。生成器は検出した接続から追跡候補のフローも自動作成するため、右側の一覧から経路を強調できる。自動フロー名は始点と終点から作られる。手動操縦や自律走行などの業務的な名称・説明が必要な場合は、JSONの`flows`を編集する。
+
+自動レイアウトでは最大の接続グループを画面上部へ階層配置し、独立した小さな接続グループを下部へ並べる。線のラベルは通常時には薄く表示し、ノードまたはフローを選択すると関係するノード・線・ラベルだけを強調する。
+
+自動生成図はファイルと静的に検出できる接続が基準であり、`docs/architecture.json`のような手動構成図は人が機能単位への集約、外部機器、実行時通信、業務フロー、座標を指定している。このため、同じワークスペースでも情報量と見やすさは完全には一致しない。重要な図として公開する場合は、自動生成結果をたたき台にしてノードの統合、`flows`の名称・説明、必要な外部コンポーネントを追記する。
+
+主なオプション：
+
+```text
+--name NAME       図に表示するプロジェクト名
+--max-nodes N     検出する最大ファイル数（既定値: 80）
+-o, --output FILE 出力先
+```
+
+### AI構成図生成
+
+Codexを使用している場合は、Codexの入力欄で次のスキルを呼び出す。APIキー、モデル名、対象パスなどの引数は不要。
+
+```text
+$generate-architecture
+```
+
+Codexが現在開いているワークスペースを調査し、`docs/architecture.json`を生成または更新する。既存JSONがある場合は、確認済みの手作業情報を維持しながら更新する。ファイル単位ではなく機能単位へ統合し、外部要素、意味のあるフロー、説明、座標もCodexが構成する。
+
+スキルは`.agents/skills/generate-architecture/`に含まれる。別のPCやワークスペースへ配布するときは、少なくとも次を同じ相対配置でコピーし、Codexを新しいセッションで開く。
+
+```text
+.agents/skills/generate-architecture/
+docs/architecture.html
+tools/generate_architecture.py
+```
+
+自然文でも呼び出せる。
+
+```text
+このワークスペースの構成図を生成してください
+```
+
+#### Codexを使用しない場合のAPIモード
+
+Codexを利用できない環境向けに、Pythonスクリプトから外部AIを呼ぶ`--ai`モードも残している。この場合のみAPI設定が必要。
+
+OpenAI APIを使用する場合：
+
+```bash
+export OPENAI_API_KEY="取得したAPIキー"
+
+python3 tools/generate_architecture.py /path/to/workspace \
+  --ai \
+  --output architecture.ai.json
+```
+
+既定ではResponses APIと`gpt-5.6-terra`を使用する。モデルは変更できる。
+
+```bash
+python3 tools/generate_architecture.py /path/to/workspace \
+  --ai \
+  --ai-model MODEL_NAME \
+  --output architecture.ai.json
+```
+
+Ollama、LM StudioなどのOpenAI互換ローカルAPIを使用する場合：
+
+```bash
+python3 tools/generate_architecture.py /path/to/workspace \
+  --ai \
+  --ai-base-url http://localhost:11434/v1 \
+  --ai-api-style chat-completions \
+  --ai-model LOCAL_MODEL_NAME \
+  --output architecture.ai.json
+```
+
+LM Studioの一般的なベースURLは`http://localhost:1234/v1`。利用するモデル名とポートは各サーバーの設定に合わせる。
+
+AI接続に失敗した場合も静的解析版を保存したいときは、`--ai-fallback`を追加する。指定しない場合は、不完全な結果をAI版として保存せず終了コード2で停止する。
+
+```bash
+python3 tools/generate_architecture.py . \
+  --ai \
+  --ai-fallback \
+  --output architecture.json
+```
+
+AIモードでは、README、manifest、launch、設定、主要ソースの抜粋が指定したAI APIへ送信される。隠しファイルと、ファイル名に`secret`、`credential`、`password`、`private_key`、`access_token`、`api_key`を含むファイルは除外されるが、機密リポジトリでは送信前に利用可否を確認すること。送信量は`--ai-max-chars`で制限できる。
+
+```bash
+python3 tools/generate_architecture.py . \
+  --ai \
+  --ai-max-chars 60000 \
+  --output architecture.ai.json
+```
+
+JSONの最小構造は次のとおり。
+
+```json
+{
+  "repository": {"name": "My Project", "primaryStack": ["Python"]},
+  "nodes": [
+    {"id": "app", "label": "Application", "group": "source", "source": "app.py"}
+  ],
+  "edges": [],
+  "flows": []
+}
+```
+
+`x`と`y`を省略したノードはビューアがグリッド状に自動配置する。グループの表示名と色はJSONの`groups`で変更できる。
+
 主に次の3つの機能を持つ。
 
 1. G923によるAIformula実機の手動操作

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Generate Architecture"
+  short_description: "ワークスペースを分析して意味のある構成図JSONを生成"
+  default_prompt: "Use $generate-architecture to analyze this workspace and generate its interactive architecture diagram."
