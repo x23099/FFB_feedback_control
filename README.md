@@ -4,6 +4,11 @@
 
 本システムは、Logitech G923(以下ハンコン)を使用してAIformula実機を遠隔操作し、自律走行中には実機の旋回挙動をフォースフィードバックとしてハンドルへ反映するシステムである。
 
+システム全体の構成は、次の自己完結型ドキュメントから確認できる。
+
+* [`docs/architecture.html`](docs/architecture.html): フロー選択、経路強調、検索、ズームに対応したインタラクティブ構成図
+* [`docs/architecture.json`](docs/architecture.json): AIエージェント向けのノード、接続、フロー、デプロイ情報
+
 主に次の3つの機能を持つ。
 
 1. G923によるAIformula実機の手動操作

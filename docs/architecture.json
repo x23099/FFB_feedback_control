@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schemaVersion": "1.0.0",
+  "generatedAt": "2026-08-06",
+  "repository": {
+    "name": "FFB_feedback_control",
+    "purpose": "Logitech G923による遠隔操縦、手動オーバーライド、車体挙動のフォースフィードバック再現",
+    "primaryStack": ["Python 3", "ROS 2 / rclpy", "evdev", "twist_mux", "PySide6", "aiortc"]
+  },
+  "nodes": [
+    {"id":"driver","label":"ドライバー","group":"operator","type":"actor","description":"G923で操舵、ペダル、ギア、緊急停止、表示ページを操作する。","source":null},
+    {"id":"g923-input","label":"Logitech G923\n入力デバイス","group":"hardware","type":"device","description":"Linux evdevからステアリング、ペダル、ボタン、シフター入力を提供する。","source":"/dev/input/by-id/*G923*-event-joystick"},
+    {"id":"handle","label":"handle_node","group":"control-pc","type":"ros2-node","description":"G923入力をTwist、操舵状態、ギア、走行モード、緊急停止状態へ変換する。","source":"src/oit/oit/handle.py","runtime":"ros2 run oit handle"},
+    {"id":"heartbeat","label":"heartbeat_sender_node","group":"control-pc","type":"ros2-node","description":"通信生存確認用のROS Timeを周期送信する。","source":"src/oit/oit/heartbeat_sender.py"},
+    {"id":"mirror","label":"cmd_vel_mirror_node","group":"control-pc","type":"ros2-node","description":"手動Twistをタイムアウト監視しながら倍率変換しAIFormula側へ中継する。Kobuki launchで起動。","source":"src/oit/oit/cmd_vel_mirror.py"},
+    {"id":"dds","label":"ROS 2 DDS\nネットワーク","group":"transport","type":"transport","description":"操作PCと車体間でROS 2 topicを配送する。ネットワーク設定はリポジトリ外。","source":null},
+    {"id":"watchdog","label":"failsafe_watchdog_node","group":"vehicle","type":"ros2-node","description":"heartbeat timeout時に最高優先度のゼロTwistを発行し、安定回復時間後に解除する。","source":"src/oit/oit/failsafe_watchdog.py"},
+    {"id":"autonomy","label":"自律走行ノード","group":"external","type":"external-ros2-node","description":"自律速度指令 /cmd_vel_auto を生成するリポジトリ外コンポーネント。","source":null},
+    {"id":"twist-mux","label":"twist_mux","group":"vehicle","type":"external-ros2-node","description":"safety(255)、joystick(100)、navigation(10)の優先度で速度指令を仲裁する。","source":"src/oit/config/twist_mux.yaml"},
+    {"id":"base","label":"Kobuki / AIFormula\n車体制御","group":"hardware","type":"device","description":"選択されたTwistを受けて実車を駆動する。","source":null},
+    {"id":"odometry","label":"Odometry / IMU","group":"vehicle","type":"sensor","description":"車体yawと路面・車体加速度をFFB計算へ提供する。","source":null},
+    {"id":"ffb","label":"ffb_follow_node","group":"control-pc","type":"ros2-node","description":"走行モード、yaw差分、操舵、IMU、フェイルセーフからSpring/Damper/Periodic効果を計算する。","source":"src/oit/oit/ffb_follow.py","runtime":"ros2 run oit ffb_follow"},
+    {"id":"g923-ffb","label":"G923 FFB / LED","group":"hardware","type":"device","description":"evdev Force Feedbackとhidraw LEDにより、操舵反力・路面効果・警告をドライバーへ返す。","source":"/dev/input/... + /dev/g923_led"},
+    {"id":"theta","label":"THETA / 映像送信側","group":"external","type":"external-service","description":"WebRTC offerと映像track、およびUDPタイムスタンプを送るリポジトリ外の送信側。","source":null},
+    {"id":"webrtc","label":"WebRTC Receiver","group":"video","type":"desktop-app","description":"aiohttpでofferを受け、aiortc映像をRGB変換してPySide6/OpenGLへ描画する。HTTP 5002。","source":"webrtc_receive.py"},
+    {"id":"latency","label":"Latency Monitor","group":"video","type":"desktop-app","description":"UDP 5001の送信時刻から遅延とFPSを表示する。WebRTC UIにも同等表示がある。","source":"latency_display.py"},
+    {"id":"viewer","label":"オペレーター画面","group":"operator","type":"ui","description":"遠隔映像、遅延、FPS、送信元を表示する。","source":null},
+    {"id":"team","label":"Multi-agent Team","group":"tooling","type":"cli-app","description":"Manager / Frontend / Backend / QAのモデルを編成し、リポジトリ操作ツールとログを提供する。","source":"multi_agent_team.py"},
+    {"id":"llm-bridge","label":"Local LLM Bridge","group":"tooling","type":"service-adapter","description":"OpenAI互換ローカルLLMのhealth check、手動toggle、timeout時bypassを提供する。","source":"local_llm_bridge.py"},
+    {"id":"local-llm","label":"LM Studio / Ollama / vLLM","group":"external","type":"external-service","description":"OpenAI互換APIを持つ任意のローカル推論サーバー。","source":"local_llm_config.json"},
+    {"id":"cloud-models","label":"Cloud Models","group":"external","type":"external-service","description":"ローカルLLMを使わない場合のエージェントモデル群。接続先は実行環境依存。","source":null},
+    {"id":"repo","label":"Workspace / Logs","group":"tooling","type":"data-store","description":"エージェントがファイルを検索・閲覧・編集し、役割別ログを保存する。","source":"logs/"}
+  ],
+  "edges": [
+    {"id":"e1","source":"driver","target":"g923-input","label":"操作","protocol":"physical"},
+    {"id":"e2","source":"g923-input","target":"handle","label":"evdev events","protocol":"Linux input"},
+    {"id":"e3","source":"handle","target":"dds","label":"/cmd_vel_joy + /handle/*","protocol":"ROS 2 topics"},
+    {"id":"e4","source":"handle","target":"mirror","label":"/cmd_vel_joy","protocol":"ROS 2 Twist"},
+    {"id":"e5","source":"mirror","target":"dds","label":"AIFormula manual cmd","protocol":"ROS 2 Twist"},
+    {"id":"e6","source":"heartbeat","target":"dds","label":"/remote_heartbeat","protocol":"ROS 2 Time / best effort"},
+    {"id":"e7","source":"dds","target":"watchdog","label":"/remote_heartbeat","protocol":"ROS 2 Time"},
+    {"id":"e8","source":"watchdog","target":"twist-mux","label":"/cmd_vel_safety","protocol":"ROS 2 Twist"},
+    {"id":"e9","source":"dds","target":"twist-mux","label":"manual cmd","protocol":"ROS 2 Twist"},
+    {"id":"e10","source":"autonomy","target":"twist-mux","label":"/cmd_vel_auto","protocol":"ROS 2 Twist"},
+    {"id":"e11","source":"twist-mux","target":"base","label":"/cmd_vel or /commands/velocity","protocol":"ROS 2 Twist"},
+    {"id":"e12","source":"base","target":"odometry","label":"motion","protocol":"physical/sensors"},
+    {"id":"e13","source":"odometry","target":"dds","label":"odom + IMU","protocol":"ROS 2 topics"},
+    {"id":"e14","source":"dds","target":"ffb","label":"cmd, odom, IMU, /handle/*, failsafe","protocol":"ROS 2 topics"},
+    {"id":"e15","source":"ffb","target":"g923-ffb","label":"FF_SPRING / damper / periodic","protocol":"Linux evdev FF"},
+    {"id":"e16","source":"g923-ffb","target":"driver","label":"操舵反力・LED","protocol":"physical"},
+    {"id":"e17","source":"theta","target":"webrtc","label":"offer:5002 + video track","protocol":"HTTP / WebRTC"},
+    {"id":"e18","source":"theta","target":"latency","label":"timestamp:5001","protocol":"UDP"},
+    {"id":"e19","source":"webrtc","target":"viewer","label":"RGB frames + status","protocol":"Qt signals"},
+    {"id":"e20","source":"latency","target":"viewer","label":"latency + FPS","protocol":"Qt signals"},
+    {"id":"e21","source":"team","target":"llm-bridge","label":"prompt / response","protocol":"Python API"},
+    {"id":"e22","source":"llm-bridge","target":"local-llm","label":"/models + /chat/completions","protocol":"HTTP JSON"},
+    {"id":"e23","source":"team","target":"cloud-models","label":"fallback / assigned agents","protocol":"OpenAI-compatible bridge"},
+    {"id":"e24","source":"team","target":"repo","label":"search/read/write/log","protocol":"filesystem"}
+  ],
+  "flows": [
+    {"id":"manual-drive","name":"手動操縦（Kobuki）","description":"G923入力を手動指令として優先度100で車体へ届ける。","steps":["driver","g923-input","handle","dds","twist-mux","base"],"edgeIds":["e1","e2","e3","e9","e11"]},
+    {"id":"aiformula-drive","name":"手動操縦（AIFormula）","description":"launch remapまたはmirrorを介してAIFormulaの手動入力へ届ける。","steps":["driver","g923-input","handle","mirror","dds","twist-mux","base"],"edgeIds":["e1","e2","e4","e5","e9","e11"]},
+    {"id":"autonomous","name":"自律走行","description":"自律指令をnavigation優先度10で車体へ届ける。手動・安全指令が上書き可能。","steps":["autonomy","twist-mux","base"],"edgeIds":["e10","e11"]},
+    {"id":"ffb-return","name":"車体挙動 → FFB","description":"車体yaw/IMUと選択済み速度から目標ハンドル中心・反力を計算する。","steps":["base","odometry","dds","ffb","g923-ffb","driver"],"edgeIds":["e12","e13","e14","e15","e16"]},
+    {"id":"failsafe","name":"通信断フェイルセーフ","description":"heartbeat断を検出し、priority 255の停止指令で他入力を上書きする。","steps":["heartbeat","dds","watchdog","twist-mux","base"],"edgeIds":["e6","e7","e8","e11"]},
+    {"id":"video","name":"遠隔映像・遅延表示","description":"WebRTC映像とUDP時刻情報を別経路で受信してオペレーターへ表示する。","steps":["theta","webrtc","latency","viewer"],"edgeIds":["e17","e18","e19","e20"]},
+    {"id":"agent-dev","name":"マルチエージェント開発","description":"役割別モデルがローカルまたはクラウド推論を利用しワークスペースを操作する。","steps":["team","llm-bridge","local-llm","cloud-models","repo"],"edgeIds":["e21","e22","e23","e24"]}
+  ],
+  "deployments": [
+    {"id":"aiformula","launch":"src/oit/launch/aiformula_launch.py","controlPc":["handle","ffb","heartbeat"],"vehicleExternal":["twist-mux","watchdog","base","odometry"]},
+    {"id":"kobuki-control-pc","launch":"src/oit/launch/kobuki_launch.py","controlPc":["twist-mux","handle","ffb","heartbeat","mirror"]},
+    {"id":"kobuki-vehicle","launch":"src/oit/launch/kobuki_vehicle_launch.py","vehicle":["kobuki_node","twist-mux","watchdog"]}
+  ],
+  "constraints": [
+    "G923のdevice pathと/dev/g923_ledは環境固有である。",
+    "自律走行ノード、AIFormula車体側twist_mux、映像送信側はこのリポジトリに含まれない。",
+    "twist_muxの安全性はpriorityとtopic timeoutに依存する。",
+    "WebRTC signalingはHTTPで、認証・TLS・NAT traversal設定はコード上にない。",
+    "architecture.jsonは静的スナップショットであり、コード変更時は同期更新が必要である。"
+  ]
+}
