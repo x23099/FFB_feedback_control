@@ -34,6 +34,7 @@ setup(
             'heartbeat_sender = oit.heartbeat_sender:main',
             'failsafe_watchdog = oit.failsafe_watchdog:main',
             'cmd_vel_mirror = oit.cmd_vel_mirror:main',
+            'collision_ffb_node = oit.collision_ffb_node:main',
         ],
     },
 )

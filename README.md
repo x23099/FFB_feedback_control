@@ -4,6 +4,42 @@
 
 本システムは、Logitech G923(以下ハンコン)を使用してAIformula実機を遠隔操作し、自律走行中には実機の旋回挙動をフォースフィードバックとしてハンドルへ反映するシステムである。
 
+## TTC衝突警告FFBのdry-run
+
+`collision_ffb_node`は、認識側から受け取る`/collision/ffb_command`を検証し、結果を
+`/collision/ffb_status`へ出力する。現在実装済みなのはPhase 2までであり、次の2モードだけを使用できる。
+
+| mode | G923アクセス | status上の出力 | 用途 |
+|---|---:|---:|---|
+| `disabled` | なし | 常にinactive、強度0 | 既定値 |
+| `dry_run` | なし | 予定する状態と上限制限後の強度 | ROS接続と安全機構の確認 |
+
+`hardware`は未実装であり、指定すると起動エラーになる。どちらの実装にも`evdev`、`InputDevice`、effectの
+upload/write処理は含まれず、G923を接続していても物理的な力は発生しない。
+
+ビルド後、dry-runは次で起動する。
+
+```bash
+colcon build --packages-select oit_interfaces oit
+source install/setup.bash
+ros2 launch oit collision_ffb_dry_run.launch.py
+```
+
+別端末で状態を確認する。
+
+```bash
+source install/setup.bash
+ros2 topic echo /collision/ffb_status
+```
+
+受信強度0.25は既定上限0.05へ制限される。最後の妥当なactive指令から100 msを超えると、statusへ
+`action=stop`、`reason=watchdog_timeout`、`output_active=false`を1回出力する。Ctrl+C終了時も
+`reason=shutdown`のinactive statusを出してから終了する。
+
+設定は`src/oit/config/collision_ffb.yaml`にある。dry-run launchは、このファイルの既定`disabled`を
+起動時に`dry_run`へ明示的に上書きする。Phase 3の認識側publisherとPhase 4の物理出力手順は
+`implementation_plan.md`を参照する。
+
 システム全体の構成は、次の自己完結型ドキュメントから確認できる。
 
 * [`docs/architecture.html`](docs/architecture.html): フロー選択、経路強調、検索、ズームに対応したインタラクティブ構成図

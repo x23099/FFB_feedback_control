@@ -1,0 +1,11 @@
+collision_ffb_node:
+  ros__parameters:
+    command_topic: /collision/ffb_command
+    status_topic: /collision/ffb_status
+    output_mode: disabled
+    expected_source: bird_eye
+    max_magnitude: 0.05
+    watchdog_timeout_sec: 0.1
+    maximum_message_age_sec: 0.1
+    future_tolerance_sec: 0.05
+    watchdog_check_rate_hz: 100.0

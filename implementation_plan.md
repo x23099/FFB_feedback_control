@@ -276,6 +276,21 @@ G923のeffectはファイルディスクリプタごとに所有される一方�
 - 例外、Ctrl+C、topic停止で最終状態が`inactive`になる。
 - 全テストと既存ROS packageのbuild/testがPASSする。
 
+実施結果（2026-09-09）:
+
+- `CollisionFfbStatus.msg`を追加し、sequence、受信強度、clamp後強度、pattern、停止理由、faultを構造化した。
+- `collision_ffb_node`を追加し、既定`disabled`と明示`dry_run`だけを実装した。
+- Phase 2ノードは`evdev`をimportせず、`InputDevice`、`upload_effect`、device writeを持たない構成にした。
+- `output_mode=hardware`はデバイスへ接触する前に起動エラーとなることを実行確認した。
+- 合成ROS 2指令で`CLEAR→WARNING→WARNING_HOLD→CLEAR`を再生し、状態列を確認した。
+- 受信強度0.25が既定上限0.05へclampされることを、statusと実行ログの両方で確認した。
+- active指令を最後にpublisherを停止し、約104 ms後に`watchdog_timeout`のSTOPが1回発生した。
+- launchをCtrl+Cで終了したとき、`reason=shutdown`のinactive statusを出して正常終了した。
+- 安全ポリシーとROS adapterの対象テストは43件すべてPASSし、2 packageのROS 2 Humble buildもPASSした。
+- 既存ファイルを含むリポジトリ全体のlintには従来の警告が残るが、Phase 1・2の新規ファイルは
+  flake8/pydocstyleに合格した。
+- Phase 2完了。Phase 3、evdev backend、G923物理出力には未着手である。
+
 ### Phase 3: `RICHO-theta`ライブpublisher
 
 1. `bird_eye.py`の確定済みリスク状態を約30 Hzでpublishする。
@@ -420,7 +435,7 @@ hardware adapterは書込みが必要なため、read-only指定へ依存しな�
 ## 17. 承認
 
 - ユーザー確認: 2026-09-08承認済み
-- 実装開始: Phase 1許可済み・完了
+- 実装開始: Phase 1・2許可済み・完了
 - 物理FFB試験: 実装・dry-run完了後に別途確認
 
 本計画書の承認後はPhase 1から着手し、Phase 3までをソフトウェア作業として進める。Phase 4の物理出力は、

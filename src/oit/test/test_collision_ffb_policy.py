@@ -233,6 +233,27 @@ def test_monotonic_time_moving_backwards_fails_closed():
     assert decision.reason == "monotonic_time_moved_backwards"
 
 
+def test_explicit_stop_clears_active_state():
+    policy = CollisionFfbSafetyPolicy()
+    process(policy, request())
+
+    decision = policy.force_stop("shutdown")
+
+    assert decision.action is OutputAction.STOP
+    assert not decision.active
+    assert not policy.active
+    assert decision.reason == "shutdown"
+
+
+@pytest.mark.parametrize("sequence", [-1, 1 << 64])
+def test_invalid_uint64_is_not_copied_to_stop_decision(sequence):
+    policy = CollisionFfbSafetyPolicy()
+
+    decision = process(policy, request(sequence=sequence))
+
+    assert decision.sequence is None
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [

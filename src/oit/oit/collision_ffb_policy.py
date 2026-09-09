@@ -230,6 +230,15 @@ class CollisionFfbSafetyPolicy:
             return self._no_action("watchdog_fresh")
         return self._force_stop("watchdog_timeout", fault=True)
 
+    def force_stop(
+        self,
+        reason: str,
+        *,
+        fault: bool = False,
+    ) -> CollisionFfbDecision:
+        """Clear the active state and return an explicit STOP decision."""
+        return self._force_stop(str(reason), fault=fault)
+
     def _validate_request(
         self,
         request: CollisionFfbRequest,
@@ -325,7 +334,11 @@ class CollisionFfbSafetyPolicy:
     ) -> CollisionFfbDecision:
         self._active = False
         sequence = getattr(request, "sequence", None)
-        if isinstance(sequence, bool) or not isinstance(sequence, int):
+        if (
+            isinstance(sequence, bool)
+            or not isinstance(sequence, int)
+            or not 0 <= sequence <= UINT64_MAX
+        ):
             sequence = None
         return CollisionFfbDecision(
             action=OutputAction.STOP,
