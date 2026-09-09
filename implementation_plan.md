@@ -305,6 +305,27 @@ G923のeffectはファイルディスクリプタごとに所有される一方�
 - 録画再生時のactive区間・イベント数が既存`virtual_ffb_replay.csv`と一致する。
 - カメラ処理停止後100 msでadapterがinactiveになる。
 
+実施結果（2026-09-09）:
+
+- `RICHO-theta/src/collision_ffb_publisher.py`を追加し、既存`VirtualFfbPolicy`を
+  ライブ側でも共通利用した。
+- `bird_eye.py`のヒステリシス適用後リスクを処理フレームごとにpublishし、終了時は
+  `CLEAR`を送ってからnodeを破棄するようにした。
+- publisherは既定無効を維持し、v6設定からFFB項目だけを追加した
+  `bird_eye_config_ttc_v6_ffb_dry_run_20260909.json`で明示的に有効化した。
+- preflightへtopic、source、強度順序、`oit_interfaces.msg`の検査を追加した。
+- 録画metadataとCSVへpublisher設定、sequence、active、要求強度、pattern、送信成否、
+  エラーを保存するようにした。
+- `RICHO-theta`の全159テストと、FFB用ROS環境をsourceしたpreflightがPASSした。
+- 2026-09-08録画`202609081640.tar.xz`の4セッション計2,502フレームをv6 profileで
+  再生し、activeフレーム数、リスク別フレーム数、event数、peak強度が既存CSVと一致した。
+- 実ROS 2通信で`CLEAR/PATH=0.00`、`WARNING/WARNING_HOLD=0.25`、
+  `CRITICAL=0.40`を確認し、adapter側ではactive要求がすべて0.05へ制限された。
+- 30.0 Hzで30 commandを送受信し、publisher停止後約100 msで
+  `watchdog_timeout`のinactive状態へ遷移した。終了時も`shutdown`のinactiveを確認した。
+- G923へのアクセスと物理FFB出力は行っていない。
+- Phase 3完了。Phase 4は未承認・未着手である。
+
 ### Phase 4: 停止状態の最小物理出力
 
 次の全条件を満たした場合だけ実施する。
