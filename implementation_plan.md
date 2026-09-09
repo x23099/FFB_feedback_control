@@ -371,6 +371,26 @@ G923のeffectはファイルディスクリプタごとに所有される一方�
 7. 0.05を超える物理出力は、gateの単体試験と別途の実施確認が終わるまで行わない。
 8. 矩形波、停止、反復、知覚強度の条件を満たした後にPhase 5へ進む。
 
+リモート事前作業（2026-09-10、ユーザー承認済み）:
+
+1. 合成FFB要求のsequence生成、有限送信、終了時CLEARを行う`collision_ffb_probe`を追加する。
+2. commandと`/collision/ffb_status`をCSVへ保存し、適用値、fault、停止、sequence、応答時間を自動判定する。
+3. 強度0.05を維持し、continuous、double、tripleの通知cadenceをdry-runで比較する。
+4. dry-run adapterの起動、cadence比較、ログ保存を1コマンドで再現できるスクリプトを追加する。
+5. Phase 5に先立ち、録画由来の衝突リスク列をROS 2へ再生してadapterへ接続する非hardware手順を用意する。
+6. 各作業日の代表画像・グラフを`Experimental_results/YYYY-MM-DD/report_assets/`へ保存する。
+7. カメラ画像は未描画映像から元解像度のフレームを取り出し、注釈、合成、crop、resize、色補正を行わない。
+8. これらのリモート作業では`output_mode=dry_run`だけを使用し、G923をopenしない。
+
+リモート事前作業の実施結果（2026-09-10）:
+
+- `collision_ffb_probe`と`start_collision_ffb_dry_run_suite.sh`を実装した。
+- continuous、double、tripleはすべてdry-run自動判定PASS、active apply coverage 1.000、fault 0だった。
+- 応答p95は順に1.700 ms、1.224 ms、2.477 ms、CLEAR停止応答は0.917 ms、0.796 ms、1.129 msだった。
+- 録画済みrisk 629行を既存publisher経由で再生し、630 command/status、active 69、fault 0、最終inactiveでPASSした。
+- 上記の実行中にG923、カメラ、Kobukiへはアクセスしていない。
+- 生カメラ画像1枚と比較グラフ2枚を日付別`report_assets`へ出力し、出典と変換履歴を保存した。
+
 次の全条件を満たした場合だけ実施する。
 
 1. G923を机へ固定し、周囲から手、物、ケーブルを退避する。

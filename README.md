@@ -14,7 +14,9 @@
 | `disabled` | なし | 常にinactive、強度0 | 既定値 |
 | `dry_run` | なし | 予定する状態と上限制限後の強度 | ROS接続と安全機構の確認 |
 
-Phase 4事前実装としてhardware backendは追加済みだが、実機試験は未実施であり、専用launchも用意していない。
+Phase 4としてhardware backendを追加し、停止状態のG923で0.03と0.05の実機試験を実施済みである。
+0.05の正弦波は知覚できず、0.05の矩形波は知覚できたため、現在のactive波形は矩形波へ統一している。
+ただし危険通知としてはまだ弱く、走行を伴う接続試験は未実施である。専用hardware launchは用意していない。
 `hardware_armed=true`、安定した`/dev/input/by-id/*-event-joystick`、`max_magnitude<=0.03`を
 すべて明示しない限り初回hardwareモードは起動拒否する。0.03試験確認後に限り、
 `hardware_initial_test_passed=true`を追加すると上限0.05まで許可する。0.05を超える設定は常に拒否する。
@@ -41,6 +43,32 @@ ros2 launch oit collision_ffb_dry_run.launch.py
 source install/setup.bash
 ros2 topic echo /collision/ffb_status
 ```
+
+合成要求の送信、status収集、continuous/double/tripleの比較、CSV・JSON・Markdown保存は、
+次の1コマンドで再現できる。adapterは明示的に`dry_run`で起動され、入力デバイスを開かない。
+
+```bash
+./start_collision_ffb_dry_run_suite.sh \
+  Experimental_results/YYYY-MM-DD/ffb_cadence_dry_run
+```
+
+個別条件を確認する場合は、dry-run adapterの起動後に次を実行する。
+
+```bash
+ros2 run oit collision_ffb_probe \
+  --pattern steady \
+  --cadence continuous \
+  --magnitude 0.05 \
+  --duration 0.5 \
+  --rate 30 \
+  --expect-output-mode dry_run \
+  --output-dir /tmp/collision_ffb_probe
+```
+
+probeは強度0.05、送信時間0.5秒をコード上限とし、終了時は必ずCLEARを3回送る。
+hardwareを期待するprobeは`--expect-output-mode hardware`だけでは起動せず、
+`--acknowledge-physical-output`の追加を要求する。probe自身はadapterを起動しないため、
+物理出力条件は`collision_ffb_node`側の安全gateでも独立に検査される。
 
 受信強度0.25は既定上限0.05へ制限される。最後の妥当なactive指令から100 msを超えると、statusへ
 `action=stop`、`reason=watchdog_timeout`、`output_active=false`を1回出力する。Ctrl+C終了時も

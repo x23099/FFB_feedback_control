@@ -35,6 +35,7 @@ setup(
             'failsafe_watchdog = oit.failsafe_watchdog:main',
             'cmd_vel_mirror = oit.cmd_vel_mirror:main',
             'collision_ffb_node = oit.collision_ffb_node:main',
+            'collision_ffb_probe = oit.collision_ffb_probe:main',
         ],
     },
 )
