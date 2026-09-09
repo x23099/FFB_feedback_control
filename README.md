@@ -16,7 +16,9 @@
 
 Phase 4事前実装としてhardware backendは追加済みだが、実機試験は未実施であり、専用launchも用意していない。
 `hardware_armed=true`、安定した`/dev/input/by-id/*-event-joystick`、`max_magnitude<=0.03`を
-すべて明示しない限りhardwareモードは起動拒否する。実機試験の承認と安全準備が終わるまでは使用しない。
+すべて明示しない限り初回hardwareモードは起動拒否する。0.03試験確認後に限り、
+`hardware_initial_test_passed=true`を追加すると上限0.05まで許可する。0.05を超える設定は常に拒否する。
+実機試験の承認と安全準備が終わるまでは使用しない。
 
 hardware backendは120 ms以下の有限periodic effect、終了時stop/erase、capability・effect slot検査、
 writer排他lockを実装している。共通lockは`collision_ffb_node`、`ffb_follow`、`spring`、`periodic`へ

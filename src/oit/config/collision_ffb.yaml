@@ -4,6 +4,7 @@ collision_ffb_node:
     status_topic: /collision/ffb_status
     output_mode: disabled
     hardware_armed: false
+    hardware_initial_test_passed: false
     expected_source: bird_eye
     max_magnitude: 0.05
     watchdog_timeout_sec: 0.1

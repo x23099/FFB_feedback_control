@@ -33,6 +33,7 @@ from oit.collision_ffb_backend import EvdevCollisionFfbBackend
 
 OUTPUT_MODES = frozenset({"disabled", "dry_run", "hardware"})
 INITIAL_HARDWARE_MAX_MAGNITUDE = 0.03
+VERIFIED_HARDWARE_MAX_MAGNITUDE = 0.05
 
 
 def validate_output_mode(value: object, *, hardware_armed=False) -> str:
@@ -78,6 +79,7 @@ class CollisionFfbNode(Node):
         self.declare_parameter("status_topic", "/collision/ffb_status")
         self.declare_parameter("output_mode", "disabled")
         self.declare_parameter("hardware_armed", False)
+        self.declare_parameter("hardware_initial_test_passed", False)
         self.declare_parameter("expected_source", "bird_eye")
         self.declare_parameter("max_magnitude", 0.05)
         self.declare_parameter("watchdog_timeout_sec", 0.1)
@@ -102,14 +104,24 @@ class CollisionFfbNode(Node):
         configured_max_magnitude = float(
             self.get_parameter("max_magnitude").value
         )
-        if (
-            self.output_mode == "hardware"
-            and configured_max_magnitude > INITIAL_HARDWARE_MAX_MAGNITUDE
-        ):
-            raise ValueError(
-                "initial hardware mode requires max_magnitude <= "
-                f"{INITIAL_HARDWARE_MAX_MAGNITUDE:.2f}"
-            )
+        if self.output_mode == "hardware":
+            initial_test_passed = self.get_parameter(
+                "hardware_initial_test_passed"
+            ).value
+            if configured_max_magnitude > VERIFIED_HARDWARE_MAX_MAGNITUDE:
+                raise ValueError(
+                    "Phase 4 hardware mode requires max_magnitude <= "
+                    f"{VERIFIED_HARDWARE_MAX_MAGNITUDE:.2f}"
+                )
+            if (
+                configured_max_magnitude > INITIAL_HARDWARE_MAX_MAGNITUDE
+                and initial_test_passed is not True
+            ):
+                raise ValueError(
+                    "max_magnitude above "
+                    f"{INITIAL_HARDWARE_MAX_MAGNITUDE:.2f} requires "
+                    "hardware_initial_test_passed=true"
+                )
         watchdog_timeout = float(
             self.get_parameter("watchdog_timeout_sec").value
         )

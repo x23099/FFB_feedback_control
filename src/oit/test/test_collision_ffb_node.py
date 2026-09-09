@@ -48,7 +48,13 @@ class FakeHardwareBackend:
 def node_factory():
     resources = []
 
-    def create(mode="dry_run", *, hardware_armed=False, max_magnitude=0.05):
+    def create(
+        mode="dry_run",
+        *,
+        hardware_armed=False,
+        initial_test_passed=False,
+        max_magnitude=0.05,
+    ):
         context = Context()
         rclpy.init(args=[], context=context)
         clocks = {"monotonic": 2.0, "current": 10.0}
@@ -58,6 +64,10 @@ def node_factory():
                 parameter_overrides=[
                     Parameter("output_mode", value=mode),
                     Parameter("hardware_armed", value=hardware_armed),
+                    Parameter(
+                        "hardware_initial_test_passed",
+                        value=initial_test_passed,
+                    ),
                     Parameter("max_magnitude", value=max_magnitude),
                     Parameter(
                         "device_path",
@@ -233,11 +243,37 @@ def test_hardware_backend_failure_is_reported_and_stopped(node_factory):
 
 
 def test_initial_hardware_mode_rejects_cap_above_limit(node_factory):
-    with pytest.raises(ValueError, match="max_magnitude"):
+    with pytest.raises(ValueError, match="initial_test_passed"):
         node_factory(
             mode="hardware",
             hardware_armed=True,
             max_magnitude=0.05,
+        )
+
+
+def test_verified_hardware_mode_allows_point_zero_five(node_factory):
+    node, publisher, _clocks = node_factory(
+        mode="hardware",
+        hardware_armed=True,
+        initial_test_passed=True,
+        max_magnitude=0.05,
+    )
+
+    node._on_command(command(1, magnitude=0.25))
+
+    assert node.hardware_backend.applied[0][0] == pytest.approx(0.05)
+    assert publisher.messages[-1].applied_magnitude == pytest.approx(0.05)
+
+
+def test_verified_hardware_mode_rejects_cap_above_point_zero_five(
+    node_factory,
+):
+    with pytest.raises(ValueError, match="max_magnitude <= 0.05"):
+        node_factory(
+            mode="hardware",
+            hardware_armed=True,
+            initial_test_passed=True,
+            max_magnitude=0.051,
         )
 
 
