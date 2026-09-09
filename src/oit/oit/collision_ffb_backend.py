@@ -146,11 +146,10 @@ def build_periodic_effect(
             f"duration_ms must be within 1..{MAX_EFFECT_DURATION_MS}"
         )
     magnitude = normalized_to_evdev_magnitude(normalized_magnitude)
-    waveform = (
-        ecodes_module.FF_SQUARE
-        if pattern is FeedbackPattern.PULSE
-        else ecodes_module.FF_SINE
-    )
+    # G923 testing showed that a 0.05/35 ms sine was not perceptible while
+    # the same bounded square waveform was.  Use the verified waveform for
+    # every active pattern; warning cadence can be tuned separately.
+    waveform = ecodes_module.FF_SQUARE
     envelope = ff_module.Envelope(0, 0, 0, 0)
     periodic = ff_module.Periodic(
         waveform,
@@ -246,8 +245,8 @@ class EvdevCollisionFfbBackend:
             raise CollisionFfbBackendError(
                 "device does not support FF_PERIODIC"
             )
-        if self._ecodes.FF_SINE not in effects:
-            raise CollisionFfbBackendError("device does not support FF_SINE")
+        if self._ecodes.FF_SQUARE not in effects:
+            raise CollisionFfbBackendError("device does not support FF_SQUARE")
         if int(self._device.ff_effects_count) < 1:
             raise CollisionFfbBackendError(
                 "device reports no effect slots"

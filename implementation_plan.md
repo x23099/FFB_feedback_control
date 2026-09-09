@@ -154,7 +154,7 @@ QoSだけへ安全停止を依存させない。Lifespanを利用できる構成
 ### 6.1 初期effect
 
 - 種別: `FF_PERIODIC`
-- 波形: `FF_SINE`を第一候補とする。既存のSquareより立ち上がりが滑らかなため、最小強度試験に向く。
+- 波形: `FF_SQUARE`。実機試験で0.05の`FF_SINE`は知覚できず、同条件の`FF_SQUARE`は知覚できたため変更した。
 - 方向: 既存実装と同じ`16384`を初期値とし、停止状態で左右方向を確認する。
 - 1回の再生時間: 最大100～120 ms
 - active要求継続中のみ50 ms程度で再トリガーする。
@@ -332,7 +332,7 @@ G923のeffectはファイルディスクリプタごとに所有される一方�
 
 - evdevを遅延importする独立hardware backendを追加し、disabled/dry-runではデバイスを開かない構成を維持した。
 - effect長を最大120 ms、初回hardware強度上限を0.03、コード絶対上限を0.25に固定した。
-- `FF_PERIODIC`、`FF_SINE`、effect slotを起動時に検査し、不足時はeffectをuploadせず起動失敗する。
+- `FF_PERIODIC`、`FF_SQUARE`、effect slotを起動時に検査し、不足時はeffectをuploadせず起動失敗する。
 - apply失敗時もstopとeraseを試行し、close時はstop、erase、device close、lock解放を順に試行する。
 - hardware起動には`output_mode=hardware`に加え、独立した`hardware_armed=true`、安定したby-id path、
   `max_magnitude<=0.03`を必須とした。hardware専用launchはまだ作成していない。

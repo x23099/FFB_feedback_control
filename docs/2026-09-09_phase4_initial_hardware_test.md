@@ -62,6 +62,15 @@
 - `hardware_initial_test_passed=true`を明示した場合だけ、上限0.05を許可する安全gateを実装した。
 - 初回確認の有無にかかわらず、0.05を超えるhardware設定は起動時に拒否する。
 - gateの単体試験62件、flake8、pydocstyle、`git diff --check`、2パッケージのclean buildはPASSした。
-- 0.05の実機出力試験はまだ実施していない。
+- このgateを用いて0.05の正弦波・矩形波試験を実施した。
+
+## 0.05矩形波試験結果
+
+- `FF_SQUARE`、0.05、約0.5秒の試験を2回実施した。
+- 両試行ともsequence 0で`action=apply`、`requested=0.050`、`applied=0.050`、`pattern=3`、`fault=false`だった。
+- 両試行とも約503 ms後のsequence 15で`action=stop`となり、追加CLEARとshutdownでも停止状態を維持した。
+- 操作者は振動を知覚できたが、危険通知としては弱いと評価した。
+- 同じ強度で矩形波だけ知覚できたため、collision FFB hardware backendの全active patternを矩形波へ変更した。
+- 強度上限は0.05のままとし、強度を上げる前に変更後の通常WARNING経路を再検証する。
 
 Phase 4は未完了であり、TTC連動試験には進まない。

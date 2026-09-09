@@ -20,7 +20,7 @@ Phase 4事前実装としてhardware backendは追加済みだが、実機試験
 `hardware_initial_test_passed=true`を追加すると上限0.05まで許可する。0.05を超える設定は常に拒否する。
 実機試験の承認と安全準備が終わるまでは使用しない。
 
-hardware backendは120 ms以下の有限periodic effect、終了時stop/erase、capability・effect slot検査、
+hardware backendは実機確認済みの矩形波による120 ms以下の有限periodic effect、終了時stop/erase、capability・effect slot検査、
 writer排他lockを実装している。共通lockは`collision_ffb_node`、`ffb_follow`、`spring`、`periodic`へ
 適用され、これらの主要writerは同時起動できない。TTC adapterはAutocenterとGainを変更しない。
 

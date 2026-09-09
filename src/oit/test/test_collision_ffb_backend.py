@@ -6,6 +6,7 @@ from oit.collision_ffb_backend import (
     CollisionFfbBackendError,
     EvdevCollisionFfbBackend,
     FfbWriterLock,
+    build_periodic_effect,
     normalized_to_evdev_magnitude,
 )
 from oit.collision_ffb_policy import FeedbackPattern
@@ -48,7 +49,7 @@ class FakeDevice:
     ):
         self.path = path
         self.effects = (
-            [FakeEcodes.FF_PERIODIC, FakeEcodes.FF_SINE]
+            [FakeEcodes.FF_PERIODIC, FakeEcodes.FF_SQUARE]
             if effects is None
             else effects
         )
@@ -113,11 +114,34 @@ def test_construction_checks_capability_without_writing(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "pattern",
+    [
+        FeedbackPattern.STEADY,
+        FeedbackPattern.STEADY_HOLD,
+        FeedbackPattern.PULSE,
+    ],
+)
+def test_all_active_patterns_use_verified_square_wave(pattern):
+    effect = build_periodic_effect(
+        FakeFf,
+        FakeEcodes,
+        effect_id=-1,
+        pattern=pattern,
+        normalized_magnitude=0.05,
+        period_ms=35,
+        duration_ms=120,
+    )
+
+    periodic = effect.args[5].kwargs["ff_periodic_effect"]
+    assert periodic.args[0] == FakeEcodes.FF_SQUARE
+
+
+@pytest.mark.parametrize(
     "effects,effect_count,expected",
     [
-        ([FakeEcodes.FF_SINE], 16, "FF_PERIODIC"),
-        ([FakeEcodes.FF_PERIODIC], 16, "FF_SINE"),
-        ([FakeEcodes.FF_PERIODIC, FakeEcodes.FF_SINE], 0, "effect slots"),
+        ([FakeEcodes.FF_SQUARE], 16, "FF_PERIODIC"),
+        ([FakeEcodes.FF_PERIODIC], 16, "FF_SQUARE"),
+        ([FakeEcodes.FF_PERIODIC, FakeEcodes.FF_SQUARE], 0, "effect slots"),
     ],
 )
 def test_missing_capability_fails_before_upload(
@@ -153,6 +177,7 @@ def test_apply_refreshes_one_finite_effect_slot(tmp_path):
         replay = effect.args[4]
         assert replay.args[0] == 120
     periodic = device.uploaded[-1].args[5].kwargs["ff_periodic_effect"]
+    assert periodic.args[0] == FakeEcodes.FF_SQUARE
     assert periodic.args[2] == normalized_to_evdev_magnitude(0.05)
     backend.close()
 
