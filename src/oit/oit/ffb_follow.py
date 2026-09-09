@@ -14,6 +14,8 @@ from std_msgs.msg import Bool, Float32, Int32, String
 
 from evdev import InputDevice, ecodes, ff
 
+from oit.collision_ffb_backend import FfbWriterLock
+
 
 class FfbFollowNode(Node):
     def __init__(self):
@@ -1266,21 +1268,34 @@ class FfbFollowNode(Node):
         G923を開き,待機用Autocenterを設定する.
         """
 
-        self.dev = InputDevice(self.device_path)
+        self.ffb_writer_lock = FfbWriterLock()
+        self.ffb_writer_lock.acquire()
+        self.dev = None
+        try:
+            self.dev = InputDevice(self.device_path)
 
-        self.get_logger().info(
-            f'Opened FFB device: {self.dev.name}'
-        )
+            self.get_logger().info(
+                f'Opened FFB device: {self.dev.name}'
+            )
 
-        self.apply_autocenter(
-            self.idle_autocenter
-        )
-        
-        if self.damper_enabled:
-            self.play_damper()
+            self.apply_autocenter(
+                self.idle_autocenter
+            )
 
-        self.prepare_bump_periodic_effect()
-        self.prepare_emergency_feedback_effect()
+            if self.damper_enabled:
+                self.play_damper()
+
+            self.prepare_bump_periodic_effect()
+            self.prepare_emergency_feedback_effect()
+        except Exception:
+            if self.dev is not None:
+                try:
+                    self.dev.close()
+                except Exception:
+                    pass
+                self.dev = None
+            self.ffb_writer_lock.release()
+            raise
     
     def initialize_ros_interfaces(self):
         """
@@ -3339,10 +3354,14 @@ class FfbFollowNode(Node):
         )
 
         try:
-            self.dev.close()
+            if self.dev is not None:
+                self.dev.close()
 
         except Exception:
             pass
+
+        if hasattr(self, 'ffb_writer_lock'):
+            self.ffb_writer_lock.release()
 
         super().destroy_node()
 

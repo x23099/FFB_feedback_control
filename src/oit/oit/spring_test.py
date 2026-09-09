@@ -5,6 +5,8 @@ import subprocess
 
 from evdev import InputDevice, ecodes, ff
 
+from oit.collision_ffb_backend import FfbWriterLock
+
 
 DEVICE_PATH = (
     '/dev/input/by-id/'
@@ -84,32 +86,40 @@ def play_effect(dev, effect, seconds=3.0):
 
 
 def main():
-    dev = InputDevice(DEVICE_PATH)
+    writer_lock = FfbWriterLock()
+    writer_lock.acquire()
+    try:
+        dev = InputDevice(DEVICE_PATH)
+    except Exception:
+        writer_lock.release()
+        raise
     print(f'Opened: {dev.name}')
+    try:
+        # Spring確認中は標準センタリングを弱める。
+        set_autocenter(0)
 
-    # Spring確認中は標準センタリングを弱める。
-    set_autocenter(0)
+        print('Test 1: center = 0')
+        effect = make_spring_effect(center=0)
+        play_effect(dev, effect, seconds=3.0)
 
-    print('Test 1: center = 0')
-    effect = make_spring_effect(center=0)
-    play_effect(dev, effect, seconds=3.0)
+        time.sleep(1.0)
 
-    time.sleep(1.0)
+        print('Test 2: center = +8000')
+        effect = make_spring_effect(center=8000)
+        play_effect(dev, effect, seconds=3.0)
 
-    print('Test 2: center = +8000')
-    effect = make_spring_effect(center=8000)
-    play_effect(dev, effect, seconds=3.0)
+        time.sleep(1.0)
 
-    time.sleep(1.0)
-
-    print('Test 3: center = -8000')
-    effect = make_spring_effect(center=-8000)
-    play_effect(dev, effect, seconds=3.0)
-
-    # 終了時は通常の重さに戻す。
-    set_autocenter(80)
-
-    dev.close()
+        print('Test 3: center = -8000')
+        effect = make_spring_effect(center=-8000)
+        play_effect(dev, effect, seconds=3.0)
+    finally:
+        try:
+            # 終了時は通常の重さに戻す。
+            set_autocenter(80)
+            dev.close()
+        finally:
+            writer_lock.release()
 
 
 if __name__ == '__main__':

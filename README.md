@@ -7,15 +7,23 @@
 ## TTC衝突警告FFBのdry-run
 
 `collision_ffb_node`は、認識側から受け取る`/collision/ffb_command`を検証し、結果を
-`/collision/ffb_status`へ出力する。現在実装済みなのはPhase 2までであり、次の2モードだけを使用できる。
+`/collision/ffb_status`へ出力する。通常作業では次の2モードだけを使用する。
 
 | mode | G923アクセス | status上の出力 | 用途 |
 |---|---:|---:|---|
 | `disabled` | なし | 常にinactive、強度0 | 既定値 |
 | `dry_run` | なし | 予定する状態と上限制限後の強度 | ROS接続と安全機構の確認 |
 
-`hardware`は未実装であり、指定すると起動エラーになる。どちらの実装にも`evdev`、`InputDevice`、effectの
-upload/write処理は含まれず、G923を接続していても物理的な力は発生しない。
+Phase 4事前実装としてhardware backendは追加済みだが、実機試験は未実施であり、専用launchも用意していない。
+`hardware_armed=true`、安定した`/dev/input/by-id/*-event-joystick`、`max_magnitude<=0.03`を
+すべて明示しない限りhardwareモードは起動拒否する。実機試験の承認と安全準備が終わるまでは使用しない。
+
+hardware backendは120 ms以下の有限periodic effect、終了時stop/erase、capability・effect slot検査、
+writer排他lockを実装している。共通lockは`collision_ffb_node`、`ffb_follow`、`spring`、`periodic`へ
+適用され、これらの主要writerは同時起動できない。TTC adapterはAutocenterとGainを変更しない。
+
+既定`disabled`と`dry_run`ではevdevをimportせず、`InputDevice`も生成しないため、G923を接続していても
+物理的な力は発生しない。
 
 ビルド後、dry-runは次で起動する。
 

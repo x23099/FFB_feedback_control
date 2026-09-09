@@ -6,6 +6,8 @@ import time
 
 from evdev import InputDevice, ecodes, ff
 
+from oit.collision_ffb_backend import FfbWriterLock
+
 
 DEVICE_PATH = (
     '/dev/input/by-id/'
@@ -90,7 +92,13 @@ def main():
     parser.add_argument('--autocenter', type=int, default=0)
     args = parser.parse_args()
 
-    dev = InputDevice(args.device)
+    writer_lock = FfbWriterLock()
+    writer_lock.acquire()
+    try:
+        dev = InputDevice(args.device)
+    except Exception:
+        writer_lock.release()
+        raise
     print(f'Opened: {dev.name}')
     print(
         f'waveform={args.waveform}, '
@@ -114,8 +122,11 @@ def main():
             time.sleep(args.interval_sec)
 
     finally:
-        set_autocenter(args.device, 80)
-        dev.close()
+        try:
+            set_autocenter(args.device, 80)
+            dev.close()
+        finally:
+            writer_lock.release()
 
 
 if __name__ == '__main__':

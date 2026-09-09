@@ -23,22 +23,58 @@ class FakePublisher:
         self.messages.append(message)
 
 
+class FakeHardwareBackend:
+    def __init__(self, device_path, **kwargs):
+        self.device_path = device_path
+        self.kwargs = kwargs
+        self.applied = []
+        self.stop_calls = 0
+        self.close_calls = 0
+        self.fail_apply = False
+
+    def apply(self, magnitude, pattern):
+        if self.fail_apply:
+            raise OSError("synthetic hardware failure")
+        self.applied.append((magnitude, pattern))
+
+    def stop(self):
+        self.stop_calls += 1
+
+    def close(self):
+        self.close_calls += 1
+
+
 @pytest.fixture
 def node_factory():
     resources = []
 
-    def create(mode="dry_run"):
+    def create(mode="dry_run", *, hardware_armed=False, max_magnitude=0.05):
         context = Context()
         rclpy.init(args=[], context=context)
         clocks = {"monotonic": 2.0, "current": 10.0}
-        node = CollisionFfbNode(
-            context=context,
-            parameter_overrides=[
-                Parameter("output_mode", value=mode),
-            ],
-            monotonic_clock=lambda: clocks["monotonic"],
-            current_time_clock=lambda: clocks["current"],
-        )
+        try:
+            node = CollisionFfbNode(
+                context=context,
+                parameter_overrides=[
+                    Parameter("output_mode", value=mode),
+                    Parameter("hardware_armed", value=hardware_armed),
+                    Parameter("max_magnitude", value=max_magnitude),
+                    Parameter(
+                        "device_path",
+                        value=(
+                            "/dev/input/by-id/"
+                            "usb-Logitech_G923-event-joystick"
+                        ),
+                    ),
+                ],
+                monotonic_clock=lambda: clocks["monotonic"],
+                current_time_clock=lambda: clocks["current"],
+                hardware_backend_factory=FakeHardwareBackend,
+            )
+        except Exception:
+            if context.ok():
+                rclpy.shutdown(context=context)
+            raise
         publisher = FakePublisher()
         node.status_publisher = publisher
         resources.append((node, context))
@@ -73,11 +109,12 @@ def command(
     return message
 
 
-def test_phase2_modes_reject_hardware_and_unknown_values():
+def test_modes_require_independent_hardware_arm():
     assert validate_output_mode("disabled") == "disabled"
     assert validate_output_mode(" DRY_RUN ") == "dry_run"
-    with pytest.raises(ValueError, match="unavailable"):
+    with pytest.raises(ValueError, match="hardware_armed"):
         validate_output_mode("hardware")
+    assert validate_output_mode("hardware", hardware_armed=True) == "hardware"
     with pytest.raises(ValueError, match="unknown"):
         validate_output_mode("unexpected")
 
@@ -150,6 +187,58 @@ def test_disabled_mode_never_marks_physical_output_active(node_factory):
     assert not status.output_active
     assert status.applied_magnitude == 0.0
     assert status.output_mode == "disabled"
+
+
+def test_hardware_mode_uses_fake_backend_with_initial_cap(node_factory):
+    node, publisher, _clocks = node_factory(
+        mode="hardware",
+        hardware_armed=True,
+        max_magnitude=0.03,
+    )
+
+    node._on_command(command(1, magnitude=0.25))
+    node._on_command(command(
+        2,
+        risk=CollisionFfbCommand.CLEAR,
+        pattern=CollisionFfbCommand.OFF,
+        active=False,
+        magnitude=0.0,
+    ))
+
+    backend = node.hardware_backend
+    assert len(backend.applied) == 1
+    assert backend.applied[0][0] == pytest.approx(0.03)
+    assert backend.stop_calls == 1
+    assert publisher.messages[0].output_active
+    assert publisher.messages[0].applied_magnitude == pytest.approx(0.03)
+    assert not publisher.messages[1].output_active
+
+
+def test_hardware_backend_failure_is_reported_and_stopped(node_factory):
+    node, publisher, _clocks = node_factory(
+        mode="hardware",
+        hardware_armed=True,
+        max_magnitude=0.03,
+    )
+    node.hardware_backend.fail_apply = True
+
+    node._on_command(command(1))
+
+    status = publisher.messages[-1]
+    assert status.fault
+    assert not status.output_active
+    assert status.applied_magnitude == 0.0
+    assert "hardware_error:OSError" in status.reason
+    assert node.hardware_backend.stop_calls == 1
+
+
+def test_initial_hardware_mode_rejects_cap_above_limit(node_factory):
+    with pytest.raises(ValueError, match="max_magnitude"):
+        node_factory(
+            mode="hardware",
+            hardware_armed=True,
+            max_magnitude=0.05,
+        )
 
 
 def test_watchdog_publishes_exactly_one_stop(node_factory):

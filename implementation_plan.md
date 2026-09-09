@@ -328,6 +328,21 @@ G923のeffectはファイルディスクリプタごとに所有される一方�
 
 ### Phase 4: 停止状態の最小物理出力
 
+事前実装状況（2026-09-09、実機未接続）:
+
+- evdevを遅延importする独立hardware backendを追加し、disabled/dry-runではデバイスを開かない構成を維持した。
+- effect長を最大120 ms、初回hardware強度上限を0.03、コード絶対上限を0.25に固定した。
+- `FF_PERIODIC`、`FF_SINE`、effect slotを起動時に検査し、不足時はeffectをuploadせず起動失敗する。
+- apply失敗時もstopとeraseを試行し、close時はstop、erase、device close、lock解放を順に試行する。
+- hardware起動には`output_mode=hardware`に加え、独立した`hardware_armed=true`、安定したby-id path、
+  `max_magnitude<=0.03`を必須とした。hardware専用launchはまだ作成していない。
+- 共通writer lockを`collision_ffb_node`、`ffb_follow`、`spring`、`periodic`へ適用した。
+- fake deviceによるbackend試験14件と、policy・ROS adapterを合わせた対象60件がPASSした。
+- ROS 2の2 package buildはPASSした。リポジトリ全体のcolcon testは対象60件がPASSした一方、
+  従来ファイルのflake8/pydocstyle警告によりlint 2件が既知のFAILとなった。新規・変更した安全系対象の
+  個別flake8/pydocstyleはPASSした。
+- G923のopen、effect upload/write、物理出力は一度も実施していない。以下の実機試験は未着手である。
+
 次の全条件を満たした場合だけ実施する。
 
 1. G923を机へ固定し、周囲から手、物、ケーブルを退避する。

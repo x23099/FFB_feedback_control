@@ -3,9 +3,14 @@ collision_ffb_node:
     command_topic: /collision/ffb_command
     status_topic: /collision/ffb_status
     output_mode: disabled
+    hardware_armed: false
     expected_source: bird_eye
     max_magnitude: 0.05
     watchdog_timeout_sec: 0.1
     maximum_message_age_sec: 0.1
     future_tolerance_sec: 0.05
     watchdog_check_rate_hz: 100.0
+    device_path: ""
+    writer_lock_path: /tmp/oit-g923-ffb-writer.lock
+    effect_duration_ms: 120
+    effect_period_ms: 35
