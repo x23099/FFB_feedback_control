@@ -207,6 +207,15 @@ def test_stale_and_future_timestamps_fail_closed():
     assert future.fault and "future_message" in future.reason
 
 
+def test_receiver_challenge_mode_does_not_compare_wall_clocks():
+    policy = CollisionFfbSafetyPolicy(timestamp_age_check_enabled=False)
+
+    decision = process(policy, request(generated=1000.0), now=10.0)
+
+    assert decision.action is OutputAction.APPLY
+    assert not decision.fault
+
+
 def test_watchdog_stops_once_at_timeout():
     policy = CollisionFfbSafetyPolicy(watchdog_timeout_sec=0.1)
     process(policy, request(), monotonic=2.0)

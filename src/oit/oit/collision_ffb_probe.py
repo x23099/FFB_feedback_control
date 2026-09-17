@@ -18,7 +18,11 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 import rclpy
-from oit_interfaces.msg import CollisionFfbCommand, CollisionFfbStatus
+from oit_interfaces.msg import (
+    CollisionFfbChallenge,
+    CollisionFfbCommand,
+    CollisionFfbStatus,
+)
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -63,10 +67,15 @@ class ProbeSettings:
     reason: str = "manual_collision_ffb_probe"
     expect_output_mode: str = "dry_run"
     acknowledge_physical_output: bool = False
+    freshness_mode: str = "clock"
 
 
 def validate_settings(settings: ProbeSettings) -> ProbeSettings:
     """Reject settings outside the remotely verified Phase 4 envelope."""
+    if settings.freshness_mode not in {"clock", "challenge"}:
+        raise ValueError("freshness_mode must be clock or challenge")
+    if settings.freshness_mode == "challenge" and settings.expect_output_mode != "dry_run":
+        raise ValueError("challenge probe is dry-run only")
     if settings.pattern not in PATTERNS:
         raise ValueError(f"unsupported pattern: {settings.pattern!r}")
     if settings.cadence not in CADENCES:
@@ -259,7 +268,11 @@ def command_qos() -> QoSProfile:
 class CollisionFfbProbeNode(Node):
     """Publish one bounded probe and collect adapter statuses."""
 
-    def __init__(self, command_topic: str, status_topic: str):
+    def __init__(
+        self, command_topic: str, status_topic: str, *,
+        freshness_mode: str = "clock",
+        challenge_topic: str = "/collision/ffb_challenge",
+    ):
         """Create publisher and subscriber without opening an input device."""
         super().__init__("collision_ffb_probe")
         qos = command_qos()
@@ -270,12 +283,27 @@ class CollisionFfbProbeNode(Node):
         )
         self.status_rows: list[dict] = []
         self.started_monotonic_sec = time.monotonic()
+        self.latest_challenge = None
         self.subscription = self.create_subscription(
             CollisionFfbStatus,
             status_topic,
             self._on_status,
             qos,
         )
+        self.challenge_subscription = None
+        if freshness_mode == "challenge":
+            self.challenge_subscription = self.create_subscription(
+                CollisionFfbChallenge,
+                challenge_topic,
+                self._on_challenge,
+                qos,
+            )
+
+    def _on_challenge(self, message: CollisionFfbChallenge) -> None:
+        if int(message.session_id) > 0 and int(message.token) > 0:
+            self.latest_challenge = (
+                int(message.session_id), int(message.token), time.monotonic()
+            )
 
     def _on_status(self, message: CollisionFfbStatus) -> None:
         received = time.monotonic()
@@ -310,12 +338,16 @@ def make_command(
     magnitude: float,
     source: str,
     reason: str,
+    receiver_session_id: int = 0,
+    receiver_token: int = 0,
 ) -> CollisionFfbCommand:
     """Build one schema-consistent active or CLEAR command."""
     message = CollisionFfbCommand()
     message.header.stamp = node.get_clock().now().to_msg()
     message.sequence = int(sequence)
     message.source = source
+    message.receiver_session_id = int(receiver_session_id)
+    message.receiver_token = int(receiver_token)
     if active:
         risk_level, pattern = PATTERNS[pattern_name]
         message.risk_level = risk_level
@@ -348,11 +380,17 @@ def run_probe(
     status_topic: str,
     discovery_sec: float,
     settle_sec: float,
+    challenge_topic: str = "/collision/ffb_challenge",
 ) -> tuple[list[dict], list[dict], int]:
     """Send one probe, always finish with CLEAR, and collect statuses."""
     validate_settings(settings)
     rclpy.init(args=None)
-    node = CollisionFfbProbeNode(command_topic, status_topic)
+    node = CollisionFfbProbeNode(
+        command_topic,
+        status_topic,
+        freshness_mode=settings.freshness_mode,
+        challenge_topic=challenge_topic,
+    )
     command_rows: list[dict] = []
     sequence = 0
     interval_sec = 1.0 / settings.rate_hz
@@ -364,6 +402,15 @@ def run_probe(
 
     def publish(active: bool) -> None:
         nonlocal sequence
+        latest = node.latest_challenge
+        if (
+            settings.freshness_mode == "challenge"
+            and latest is not None
+            and 0.0 <= time.monotonic() - latest[2] <= 0.1
+        ):
+            receiver_session_id, receiver_token = latest[:2]
+        else:
+            receiver_session_id, receiver_token = 0, 0
         message = make_command(
             node,
             sequence=sequence,
@@ -372,6 +419,8 @@ def run_probe(
             magnitude=settings.magnitude,
             source=settings.source,
             reason=f"{settings.reason}:{settings.cadence}",
+            receiver_session_id=receiver_session_id,
+            receiver_token=receiver_token,
         )
         sent = time.monotonic()
         node.publisher.publish(message)
@@ -385,6 +434,8 @@ def run_probe(
             "active": 1 if active else 0,
             "requested_magnitude": float(message.normalized_magnitude),
             "reason": str(message.reason),
+            "receiver_session_id": receiver_session_id,
+            "receiver_token": receiver_token,
         })
         sequence += 1
 
@@ -524,6 +575,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("dry_run", "hardware"),
         default="dry_run",
     )
+    parser.add_argument(
+        "--freshness-mode", choices=("clock", "challenge"), default="clock"
+    )
+    parser.add_argument("--challenge-topic", default="/collision/ffb_challenge")
     parser.add_argument("--acknowledge-physical-output", action="store_true")
     parser.add_argument("--command-topic", default="/collision/ffb_command")
     parser.add_argument("--status-topic", default="/collision/ffb_status")
@@ -546,6 +601,7 @@ def main(args=None) -> int:
         reason=parsed.reason,
         expect_output_mode=parsed.expect_output_mode,
         acknowledge_physical_output=parsed.acknowledge_physical_output,
+        freshness_mode=parsed.freshness_mode,
     )
     output_dir = parsed.output_dir or default_output_dir()
     try:
@@ -556,6 +612,7 @@ def main(args=None) -> int:
             status_topic=parsed.status_topic,
             discovery_sec=parsed.discovery_sec,
             settle_sec=parsed.settle_sec,
+            challenge_topic=parsed.challenge_topic,
         )
         summary = summarize_trial(
             command_rows,

@@ -94,6 +94,7 @@ class CollisionFfbSafetyPolicy:
         watchdog_timeout_sec: float = 0.1,
         maximum_message_age_sec: float = 0.1,
         future_tolerance_sec: float = 0.05,
+        timestamp_age_check_enabled: bool = True,
     ):
         """Initialize safety limits and reset the command-stream state."""
         if not expected_source or not expected_source.strip():
@@ -117,6 +118,7 @@ class CollisionFfbSafetyPolicy:
             future_tolerance_sec,
             "future_tolerance_sec",
         )
+        self.timestamp_age_check_enabled = bool(timestamp_age_check_enabled)
 
         self._active = False
         self._last_sequence: Optional[int] = None
@@ -239,6 +241,12 @@ class CollisionFfbSafetyPolicy:
         """Clear the active state and return an explicit STOP decision."""
         return self._force_stop(str(reason), fault=fault)
 
+    def reject_request(
+        self, request: CollisionFfbRequest, reason: str
+    ) -> CollisionFfbDecision:
+        """Fail closed while retaining the rejected command's sequence in status."""
+        return self._invalid_decision(str(reason), request)
+
     def _validate_request(
         self,
         request: CollisionFfbRequest,
@@ -261,11 +269,12 @@ class CollisionFfbSafetyPolicy:
         generated = float(request.generated_time_sec)
         if not math.isfinite(generated) or generated < 0.0:
             raise ValueError("generated_time_must_be_finite_and_nonnegative")
-        age = current_time_sec - generated
-        if age > self.maximum_message_age_sec:
-            raise ValueError(f"stale_message:age={age:.6f}")
-        if age < -self.future_tolerance_sec:
-            raise ValueError(f"future_message:age={age:.6f}")
+        if self.timestamp_age_check_enabled:
+            age = current_time_sec - generated
+            if age > self.maximum_message_age_sec:
+                raise ValueError(f"stale_message:age={age:.6f}")
+            if age < -self.future_tolerance_sec:
+                raise ValueError(f"future_message:age={age:.6f}")
 
         if self._last_sequence is not None and sequence <= self._last_sequence:
             if not self._can_reset_sequence(

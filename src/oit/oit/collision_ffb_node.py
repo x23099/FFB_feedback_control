@@ -12,7 +12,11 @@ import time
 from typing import Callable, Optional
 
 import rclpy
-from oit_interfaces.msg import CollisionFfbCommand, CollisionFfbStatus
+from oit_interfaces.msg import (
+    CollisionFfbChallenge,
+    CollisionFfbCommand,
+    CollisionFfbStatus,
+)
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -29,6 +33,7 @@ from oit.collision_ffb_policy import (
     OutputAction,
 )
 from oit.collision_ffb_backend import EvdevCollisionFfbBackend
+from oit.collision_ffb_challenge import ChallengeTracker
 
 
 OUTPUT_MODES = frozenset({"disabled", "dry_run", "hardware"})
@@ -77,6 +82,10 @@ class CollisionFfbNode(Node):
 
         self.declare_parameter("command_topic", "/collision/ffb_command")
         self.declare_parameter("status_topic", "/collision/ffb_status")
+        self.declare_parameter("challenge_topic", "/collision/ffb_challenge")
+        self.declare_parameter("freshness_mode", "clock")
+        self.declare_parameter("challenge_max_age_sec", 0.1)
+        self.declare_parameter("challenge_rate_hz", 50.0)
         self.declare_parameter("output_mode", "disabled")
         self.declare_parameter("hardware_armed", False)
         self.declare_parameter("hardware_initial_test_passed", False)
@@ -100,6 +109,21 @@ class CollisionFfbNode(Node):
         self.output_mode = validate_output_mode(
             self.get_parameter("output_mode").value,
             hardware_armed=self.get_parameter("hardware_armed").value,
+        )
+        self.freshness_mode = str(
+            self.get_parameter("freshness_mode").value
+        ).strip().lower()
+        if self.freshness_mode not in {"clock", "challenge"}:
+            raise ValueError("freshness_mode must be clock or challenge")
+        if self.freshness_mode == "challenge" and self.output_mode == "hardware":
+            raise ValueError("challenge freshness is dry-run only until safety review")
+        challenge_age = float(self.get_parameter("challenge_max_age_sec").value)
+        challenge_rate = float(self.get_parameter("challenge_rate_hz").value)
+        if not math.isfinite(challenge_rate) or challenge_rate <= 0.0:
+            raise ValueError("challenge_rate_hz must be finite and > 0")
+        self.challenge_tracker = (
+            ChallengeTracker(max_age_sec=challenge_age)
+            if self.freshness_mode == "challenge" else None
         )
         configured_max_magnitude = float(
             self.get_parameter("max_magnitude").value
@@ -145,6 +169,7 @@ class CollisionFfbNode(Node):
             future_tolerance_sec=float(
                 self.get_parameter("future_tolerance_sec").value
             ),
+            timestamp_age_check_enabled=self.freshness_mode == "clock",
         )
 
         self._monotonic_clock = monotonic_clock
@@ -186,6 +211,17 @@ class CollisionFfbNode(Node):
             self._on_command,
             qos,
         )
+        self.challenge_publisher = None
+        self.challenge_timer = None
+        if self.challenge_tracker is not None:
+            self.challenge_publisher = self.create_publisher(
+                CollisionFfbChallenge,
+                str(self.get_parameter("challenge_topic").value),
+                qos,
+            )
+            self.challenge_timer = self.create_timer(
+                1.0 / challenge_rate, self._publish_challenge
+            )
         self.watchdog_timer = self.create_timer(
             1.0 / check_rate,
             self._check_watchdog,
@@ -194,7 +230,8 @@ class CollisionFfbNode(Node):
         self.get_logger().info(
             "Collision FFB adapter started: "
             f"mode={self.output_mode}, command={self.command_topic}, "
-            f"status={self.status_topic}, watchdog={watchdog_timeout:.3f}s; "
+            f"status={self.status_topic}, watchdog={watchdog_timeout:.3f}s, "
+            f"freshness={self.freshness_mode}; "
             + (
                 "hardware backend armed"
                 if self.output_mode == "hardware"
@@ -214,6 +251,26 @@ class CollisionFfbNode(Node):
             + float(message.header.stamp.nanosec) / 1e9
         )
 
+    def _publish_challenge(self) -> None:
+        try:
+            session_id, token = self.challenge_tracker.issue(
+                float(self._monotonic_clock())
+            )
+            message = CollisionFfbChallenge()
+            message.session_id = session_id
+            message.token = token
+            self.challenge_publisher.publish(message)
+        except Exception as error:
+            decision = self.policy.force_stop(
+                f"challenge_issue_error:{type(error).__name__}:{error}",
+                fault=True,
+            )
+            self._publish_status(
+                self._execute_output(decision),
+                requested_magnitude=self._last_requested_magnitude,
+                source=self._last_source,
+            )
+
     def _on_command(self, message: CollisionFfbCommand) -> None:
         requested_magnitude = float(message.normalized_magnitude)
         self._last_source = str(message.source)
@@ -230,11 +287,28 @@ class CollisionFfbNode(Node):
                 normalized_magnitude=requested_magnitude,
                 reason=message.reason,
             )
-            decision = self.policy.process(
-                request,
-                received_monotonic_sec=float(self._monotonic_clock()),
-                current_time_sec=self._current_time_sec(),
-            )
+            received_monotonic = float(self._monotonic_clock())
+            if self.challenge_tracker is not None:
+                try:
+                    self.challenge_tracker.validate(
+                        session_id=int(message.receiver_session_id),
+                        token=int(message.receiver_token),
+                        now_monotonic_sec=received_monotonic,
+                    )
+                except ValueError as error:
+                    decision = self.policy.reject_request(request, str(error))
+                else:
+                    decision = self.policy.process(
+                        request,
+                        received_monotonic_sec=received_monotonic,
+                        current_time_sec=received_monotonic,
+                    )
+            else:
+                decision = self.policy.process(
+                    request,
+                    received_monotonic_sec=received_monotonic,
+                    current_time_sec=self._current_time_sec(),
+                )
         except Exception as error:
             decision = self.policy.force_stop(
                 f"callback_exception:{type(error).__name__}:{error}",

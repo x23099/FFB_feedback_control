@@ -51,6 +51,7 @@ def node_factory():
     def create(
         mode="dry_run",
         *,
+        freshness_mode="clock",
         hardware_armed=False,
         initial_test_passed=False,
         max_magnitude=0.05,
@@ -63,6 +64,7 @@ def node_factory():
                 context=context,
                 parameter_overrides=[
                     Parameter("output_mode", value=mode),
+                    Parameter("freshness_mode", value=freshness_mode),
                     Parameter("hardware_armed", value=hardware_armed),
                     Parameter(
                         "hardware_initial_test_passed",
@@ -106,9 +108,12 @@ def command(
     active=True,
     magnitude=0.25,
     source="bird_eye",
+    receiver_session_id=0,
+    receiver_token=0,
+    stamp_sec=10,
 ):
     message = CollisionFfbCommand()
-    message.header.stamp = Time(sec=10, nanosec=0)
+    message.header.stamp = Time(sec=stamp_sec, nanosec=0)
     message.sequence = sequence
     message.source = source
     message.risk_level = risk
@@ -116,7 +121,84 @@ def command(
     message.active = active
     message.normalized_magnitude = magnitude
     message.reason = "test"
+    message.receiver_session_id = receiver_session_id
+    message.receiver_token = receiver_token
     return message
+
+
+def test_challenge_mode_rejects_hardware_even_when_armed(node_factory):
+    with pytest.raises(ValueError, match="dry-run only"):
+        node_factory(
+            mode="hardware", freshness_mode="challenge", hardware_armed=True,
+            initial_test_passed=True,
+        )
+
+
+def test_challenge_mode_accepts_cross_pc_clock_skew_and_rejects_expired_token(
+    node_factory,
+):
+    node, publisher, clocks = node_factory(freshness_mode="challenge")
+    node.challenge_publisher = FakePublisher()
+    node._publish_challenge()
+    issued = node.challenge_publisher.messages[-1]
+
+    node._on_command(command(
+        1, stamp_sec=1000, receiver_session_id=issued.session_id,
+        receiver_token=issued.token,
+    ))
+    assert publisher.messages[-1].output_active
+    assert not publisher.messages[-1].fault
+
+    clocks["monotonic"] = 2.101
+    node._on_command(command(
+        2, stamp_sec=1000, receiver_session_id=issued.session_id,
+        receiver_token=issued.token,
+    ))
+    assert not publisher.messages[-1].output_active
+    assert publisher.messages[-1].fault
+    assert "expired_receiver_token" in publisher.messages[-1].reason
+
+
+def test_challenge_mode_rejects_missing_and_old_session(node_factory):
+    node, publisher, _clocks = node_factory(freshness_mode="challenge")
+    node._on_command(command(1))
+    assert "unknown_receiver_session" in publisher.messages[-1].reason
+
+    node.challenge_publisher = FakePublisher()
+    node._publish_challenge()
+    issued = node.challenge_publisher.messages[-1]
+    node._on_command(command(
+        2, receiver_session_id=issued.session_id - 1,
+        receiver_token=issued.token,
+    ))
+    assert publisher.messages[-1].fault
+    assert not publisher.messages[-1].output_active
+
+
+def test_challenge_mode_rejects_duplicate_then_watchdog_stops(node_factory):
+    node, publisher, clocks = node_factory(freshness_mode="challenge")
+    node.challenge_publisher = FakePublisher()
+    node._publish_challenge()
+    issued = node.challenge_publisher.messages[-1]
+    valid = command(
+        1, receiver_session_id=issued.session_id,
+        receiver_token=issued.token,
+    )
+    node._on_command(valid)
+    node._on_command(valid)
+    assert publisher.messages[-1].fault
+    assert "non_increasing_sequence" in publisher.messages[-1].reason
+    assert not publisher.messages[-1].output_active
+
+    node._on_command(command(
+        2, receiver_session_id=issued.session_id,
+        receiver_token=issued.token,
+    ))
+    assert publisher.messages[-1].output_active
+    clocks["monotonic"] = 2.1
+    node._check_watchdog()
+    assert publisher.messages[-1].reason == "watchdog_timeout"
+    assert not publisher.messages[-1].output_active
 
 
 def test_modes_require_independent_hardware_arm():

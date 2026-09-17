@@ -19,3 +19,7 @@ uint8 pattern
 bool active
 float32 normalized_magnitude
 string reason
+
+# Receiver-issued freshness proof. Zero values are invalid in challenge mode.
+uint64 receiver_session_id
+uint64 receiver_token

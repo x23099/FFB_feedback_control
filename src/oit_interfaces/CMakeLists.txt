@@ -6,6 +6,7 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/CollisionFfbChallenge.msg"
   "msg/CollisionFfbCommand.msg"
   "msg/CollisionFfbStatus.msg"
   DEPENDENCIES std_msgs
