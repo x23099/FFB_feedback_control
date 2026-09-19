@@ -1,20 +1,25 @@
 ---
 name: generate-architecture
-description: Analyze a software workspace with Codex and create or update a semantic interactive architecture diagram. Use when the user asks to generate, refresh, improve, or explain architecture.html or architecture.json, map components and runtime relationships, consolidate files into functional nodes, or create meaningful end-to-end flows without manually authoring JSON.
+description: Create or update a semantic interactive architecture diagram when the user requests generation or modification of architecture.json, architecture.html, or an equivalent diagram artifact. Do not activate for architecture explanations, code reviews, or component questions that do not request a diagram artifact change.
 ---
 
 # Generate Architecture
 
 Use Codex's repository understanding as the semantic analysis layer. Do not call an external model API and do not ask the user for API keys, model names, endpoints, or long generator arguments.
 
+## Scope
+
+Create or update only the requested diagram artifacts. If explicitly invoked for explanation or review only, read the relevant evidence and answer without generating files, running the generator, or rendering the diagram. Follow applicable repository authorization rules; diagram work does not authorize deployment, external transmission, or hardware operation.
+
 ## Workflow
 
 1. Treat the current workspace root as the target unless the user names another directory.
-2. Read repository instructions first. Inspect README files, manifests, launch/deployment files, configuration, entry points, and the source files needed to trace runtime behavior.
-3. If `tools/generate_architecture.py` exists, run its short static mode to a temporary file for factual hints:
+2. Use applicable repository instructions already in context; read missing instructions as needed. Inspect only documentation, configuration, entry points, and source paths relevant to the requested components and runtime flows. For a new diagram, establish the overall structure; for a partial update, trace changed components and their affected relationships. Reuse evidence while its sources remain unchanged.
+3. If static facts are needed and `tools/generate_architecture.py` exists, inspect its behavior before running it in static mode. Reuse current facts when available; otherwise use a unique temporary output:
 
    ```bash
-   python3 tools/generate_architecture.py . -o /tmp/architecture-facts.json
+   architecture_facts=$(mktemp /tmp/architecture-facts.XXXXXX.json)
+   python3 tools/generate_architecture.py . -o "$architecture_facts"
    ```
 
    Do not use `--ai`; Codex itself performs the semantic analysis.
@@ -23,8 +28,8 @@ Use Codex's repository understanding as the semantic analysis layer. Do not call
 6. Include supported external actors, hardware, networks, data stores, and services. Mark inferred repository-external elements clearly.
 7. Trace meaningful end-to-end flows from evidence. Use domain names such as manual control, autonomous navigation, request processing, data ingestion, safety fallback, or video delivery—not filenames—when supported.
 8. Arrange the main flow left-to-right within the `1200 x 760` viewport. Keep related subsystems together, put secondary systems below the main system, and minimize crossings.
-9. Validate every edge endpoint, flow step, and flow edge ID. Keep node IDs unique. Remove unsupported claims.
-10. Open or headlessly render `docs/architecture.html` when available and visually verify labels, overlaps, crossings, colors, tabs, search, and flow highlighting. Adjust JSON coordinates when needed.
+9. Validate the final JSON structure, unique node IDs, every edge endpoint, flow step, and flow edge ID after edits. Check changed claims and affected relationships against evidence and remove unsupported claims. Reuse successful checks for unchanged inputs; rerun or broaden checks after relevant changes, failures, or unresolved concerns.
+10. When `docs/architecture.html` and rendering tools are available, visually check the affected labels, layout, or flows. Check the full layout on initial generation or broad layout changes; test tabs, search, and flow highlighting when their behavior or relevant data changes. Adjust coordinates when needed and recheck the affected display. Report unavailable validation rather than claiming it passed.
 
 ## Output contract
 
