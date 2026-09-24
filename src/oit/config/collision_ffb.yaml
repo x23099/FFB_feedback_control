@@ -2,9 +2,14 @@ collision_ffb_node:
   ros__parameters:
     command_topic: /collision/ffb_command
     status_topic: /collision/ffb_status
+    challenge_topic: /collision/ffb_challenge
+    freshness_mode: clock
+    challenge_max_age_sec: 0.1
+    challenge_rate_hz: 50.0
     output_mode: disabled
     hardware_armed: false
     hardware_initial_test_passed: false
+    challenge_hardware_armed: false
     expected_source: bird_eye
     max_magnitude: 0.05
     watchdog_timeout_sec: 0.1

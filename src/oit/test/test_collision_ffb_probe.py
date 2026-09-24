@@ -66,6 +66,22 @@ def test_hardware_probe_requires_and_accepts_explicit_acknowledgement():
     assert validate_settings(settings) is settings
 
 
+def test_challenge_hardware_probe_keeps_physical_acknowledgement():
+    """Challenge freshness must not bypass the physical-output gate."""
+    with pytest.raises(ValueError, match="acknowledge-physical-output"):
+        validate_settings(ProbeSettings(
+            freshness_mode="challenge",
+            expect_output_mode="hardware",
+        ))
+
+    settings = ProbeSettings(
+        freshness_mode="challenge",
+        expect_output_mode="hardware",
+        acknowledge_physical_output=True,
+    )
+    assert validate_settings(settings) is settings
+
+
 def command_row(sequence, *, active, sent):
     """Build one representative command log row."""
     return {

@@ -11,6 +11,7 @@ from rclpy.parameter import Parameter
 import oit.collision_ffb_node as collision_ffb_node_module
 from oit.collision_ffb_node import (
     CollisionFfbNode,
+    validate_challenge_hardware_safety,
     validate_output_mode,
 )
 
@@ -54,6 +55,9 @@ def node_factory():
         freshness_mode="clock",
         hardware_armed=False,
         initial_test_passed=False,
+        challenge_hardware_armed=False,
+        challenge_max_age_sec=0.1,
+        watchdog_timeout_sec=0.1,
         max_magnitude=0.05,
     ):
         context = Context()
@@ -69,6 +73,18 @@ def node_factory():
                     Parameter(
                         "hardware_initial_test_passed",
                         value=initial_test_passed,
+                    ),
+                    Parameter(
+                        "challenge_hardware_armed",
+                        value=challenge_hardware_armed,
+                    ),
+                    Parameter(
+                        "challenge_max_age_sec",
+                        value=challenge_max_age_sec,
+                    ),
+                    Parameter(
+                        "watchdog_timeout_sec",
+                        value=watchdog_timeout_sec,
                     ),
                     Parameter("max_magnitude", value=max_magnitude),
                     Parameter(
@@ -126,12 +142,174 @@ def command(
     return message
 
 
-def test_challenge_mode_rejects_hardware_even_when_armed(node_factory):
-    with pytest.raises(ValueError, match="dry-run only"):
+def test_challenge_hardware_requires_dedicated_arm(node_factory):
+    with pytest.raises(ValueError, match="challenge_hardware_armed"):
         node_factory(
             mode="hardware", freshness_mode="challenge", hardware_armed=True,
-            initial_test_passed=True,
+            max_magnitude=0.03,
         )
+
+
+@pytest.mark.parametrize(
+    ("challenge_age", "watchdog", "expected"),
+    [
+        (0.101, 0.1, "challenge_max_age_sec"),
+        (0.1, 0.101, "watchdog_timeout_sec"),
+        (0.0, 0.1, "challenge_max_age_sec"),
+        (0.1, 0.0, "watchdog_timeout_sec"),
+    ],
+)
+def test_challenge_hardware_rejects_unbounded_freshness(
+    challenge_age,
+    watchdog,
+    expected,
+):
+    with pytest.raises(ValueError, match=expected):
+        validate_challenge_hardware_safety(
+            output_mode="hardware",
+            freshness_mode="challenge",
+            challenge_hardware_armed=True,
+            challenge_max_age_sec=challenge_age,
+            watchdog_timeout_sec=watchdog,
+        )
+
+
+def test_challenge_hardware_applies_with_valid_token(
+    node_factory,
+):
+    node, publisher, _clocks = node_factory(
+        mode="hardware",
+        freshness_mode="challenge",
+        hardware_armed=True,
+        challenge_hardware_armed=True,
+        max_magnitude=0.03,
+    )
+    node.challenge_publisher = FakePublisher()
+    node._publish_challenge()
+    issued = node.challenge_publisher.messages[-1]
+
+    node._on_command(command(
+        1,
+        receiver_session_id=issued.session_id,
+        receiver_token=issued.token,
+    ))
+
+    magnitude, pattern = node.hardware_backend.applied[0]
+    assert magnitude == pytest.approx(0.03)
+    assert pattern == CollisionFfbCommand.STEADY
+    assert publisher.messages[-1].output_active
+    assert not publisher.messages[-1].fault
+
+
+def test_expired_challenge_stops_active_hardware(node_factory):
+    node, publisher, clocks = node_factory(
+        mode="hardware",
+        freshness_mode="challenge",
+        hardware_armed=True,
+        challenge_hardware_armed=True,
+        max_magnitude=0.03,
+    )
+    node.challenge_publisher = FakePublisher()
+    node._publish_challenge()
+    issued = node.challenge_publisher.messages[-1]
+    node._on_command(command(
+        1,
+        receiver_session_id=issued.session_id,
+        receiver_token=issued.token,
+    ))
+
+    clocks["monotonic"] = 2.101
+    node._on_command(command(
+        2,
+        receiver_session_id=issued.session_id,
+        receiver_token=issued.token,
+    ))
+
+    assert node.hardware_backend.stop_calls == 1
+    assert not publisher.messages[-1].output_active
+    assert publisher.messages[-1].fault
+    assert "expired_receiver_token" in publisher.messages[-1].reason
+
+
+def test_challenge_issue_error_stops_active_hardware(node_factory):
+    node, publisher, _clocks = node_factory(
+        mode="hardware",
+        freshness_mode="challenge",
+        hardware_armed=True,
+        challenge_hardware_armed=True,
+        max_magnitude=0.03,
+    )
+    node.challenge_publisher = FakePublisher()
+    node._publish_challenge()
+    issued = node.challenge_publisher.messages[-1]
+    node._on_command(command(
+        1,
+        receiver_session_id=issued.session_id,
+        receiver_token=issued.token,
+    ))
+
+    def fail_issue(_now):
+        raise RuntimeError("synthetic challenge failure")
+
+    node.challenge_tracker.issue = fail_issue
+    node._publish_challenge()
+
+    assert node.hardware_backend.stop_calls == 1
+    assert not publisher.messages[-1].output_active
+    assert publisher.messages[-1].fault
+    assert (
+        "challenge_issue_error:RuntimeError"
+        in publisher.messages[-1].reason
+    )
+
+
+def test_challenge_hardware_watchdog_stops_once(node_factory):
+    node, publisher, clocks = node_factory(
+        mode="hardware",
+        freshness_mode="challenge",
+        hardware_armed=True,
+        challenge_hardware_armed=True,
+        max_magnitude=0.03,
+    )
+    node.challenge_publisher = FakePublisher()
+    node._publish_challenge()
+    issued = node.challenge_publisher.messages[-1]
+    node._on_command(command(
+        1,
+        receiver_session_id=issued.session_id,
+        receiver_token=issued.token,
+    ))
+
+    clocks["monotonic"] = 2.1
+    node._check_watchdog()
+    clocks["monotonic"] = 2.2
+    node._check_watchdog()
+
+    assert node.hardware_backend.stop_calls == 1
+    assert publisher.messages[-1].reason == "watchdog_timeout"
+    assert not publisher.messages[-1].output_active
+    assert publisher.messages[-1].fault
+
+
+def test_challenge_hardware_point_zero_five_keeps_both_gates(node_factory):
+    with pytest.raises(ValueError, match="initial_test_passed"):
+        node_factory(
+            mode="hardware",
+            freshness_mode="challenge",
+            hardware_armed=True,
+            challenge_hardware_armed=True,
+            max_magnitude=0.05,
+        )
+
+    node, _publisher, _clocks = node_factory(
+        mode="hardware",
+        freshness_mode="challenge",
+        hardware_armed=True,
+        challenge_hardware_armed=True,
+        initial_test_passed=True,
+        max_magnitude=0.05,
+    )
+    assert node.hardware_backend is not None
 
 
 def test_challenge_mode_accepts_cross_pc_clock_skew_and_rejects_expired_token(

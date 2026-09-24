@@ -36,6 +36,7 @@ PROBE_MAX_MAGNITUDE = 0.05
 PROBE_MAX_DURATION_SEC = 0.5
 PROBE_MIN_RATE_HZ = 10.0
 PROBE_MAX_RATE_HZ = 60.0
+PROBE_MAX_CHALLENGE_AGE_SEC = 0.1
 CLEAR_COUNT = 3
 CADENCES = ("continuous", "double", "triple")
 PATTERNS = {
@@ -74,8 +75,6 @@ def validate_settings(settings: ProbeSettings) -> ProbeSettings:
     """Reject settings outside the remotely verified Phase 4 envelope."""
     if settings.freshness_mode not in {"clock", "challenge"}:
         raise ValueError("freshness_mode must be clock or challenge")
-    if settings.freshness_mode == "challenge" and settings.expect_output_mode != "dry_run":
-        raise ValueError("challenge probe is dry-run only")
     if settings.pattern not in PATTERNS:
         raise ValueError(f"unsupported pattern: {settings.pattern!r}")
     if settings.cadence not in CADENCES:
@@ -406,7 +405,11 @@ def run_probe(
         if (
             settings.freshness_mode == "challenge"
             and latest is not None
-            and 0.0 <= time.monotonic() - latest[2] <= 0.1
+            and (
+                0.0
+                <= time.monotonic() - latest[2]
+                <= PROBE_MAX_CHALLENGE_AGE_SEC
+            )
         ):
             receiver_session_id, receiver_token = latest[:2]
         else:
@@ -578,7 +581,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--freshness-mode", choices=("clock", "challenge"), default="clock"
     )
-    parser.add_argument("--challenge-topic", default="/collision/ffb_challenge")
+    parser.add_argument(
+        "--challenge-topic",
+        default="/collision/ffb_challenge",
+    )
     parser.add_argument("--acknowledge-physical-output", action="store_true")
     parser.add_argument("--command-topic", default="/collision/ffb_command")
     parser.add_argument("--status-topic", default="/collision/ffb_status")

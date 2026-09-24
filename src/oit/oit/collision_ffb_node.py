@@ -39,6 +39,7 @@ from oit.collision_ffb_challenge import ChallengeTracker
 OUTPUT_MODES = frozenset({"disabled", "dry_run", "hardware"})
 INITIAL_HARDWARE_MAX_MAGNITUDE = 0.03
 VERIFIED_HARDWARE_MAX_MAGNITUDE = 0.05
+MAX_CHALLENGE_HARDWARE_FRESHNESS_SEC = 0.1
 
 
 def validate_output_mode(value: object, *, hardware_armed=False) -> str:
@@ -54,6 +55,39 @@ def validate_output_mode(value: object, *, hardware_armed=False) -> str:
             "output_mode=hardware requires hardware_armed=true"
         )
     return mode
+
+
+def validate_challenge_hardware_safety(
+    *,
+    output_mode: str,
+    freshness_mode: str,
+    challenge_hardware_armed: object,
+    challenge_max_age_sec: float,
+    watchdog_timeout_sec: float,
+) -> None:
+    """Require explicit, bounded gates for challenge-driven hardware output."""
+    if not (
+        output_mode == "hardware"
+        and freshness_mode == "challenge"
+    ):
+        return
+    if challenge_hardware_armed is not True:
+        raise ValueError(
+            "challenge freshness with hardware requires "
+            "challenge_hardware_armed=true"
+        )
+    limits = (
+        ("challenge_max_age_sec", float(challenge_max_age_sec)),
+        ("watchdog_timeout_sec", float(watchdog_timeout_sec)),
+    )
+    for name, value in limits:
+        if not math.isfinite(value) or not (
+            0.0 < value <= MAX_CHALLENGE_HARDWARE_FRESHNESS_SEC
+        ):
+            raise ValueError(
+                f"challenge hardware requires 0 < {name} <= "
+                f"{MAX_CHALLENGE_HARDWARE_FRESHNESS_SEC:.3f}"
+            )
 
 
 def collision_command_qos() -> QoSProfile:
@@ -89,6 +123,7 @@ class CollisionFfbNode(Node):
         self.declare_parameter("output_mode", "disabled")
         self.declare_parameter("hardware_armed", False)
         self.declare_parameter("hardware_initial_test_passed", False)
+        self.declare_parameter("challenge_hardware_armed", False)
         self.declare_parameter("expected_source", "bird_eye")
         self.declare_parameter("max_magnitude", 0.05)
         self.declare_parameter("watchdog_timeout_sec", 0.1)
@@ -115,9 +150,9 @@ class CollisionFfbNode(Node):
         ).strip().lower()
         if self.freshness_mode not in {"clock", "challenge"}:
             raise ValueError("freshness_mode must be clock or challenge")
-        if self.freshness_mode == "challenge" and self.output_mode == "hardware":
-            raise ValueError("challenge freshness is dry-run only until safety review")
-        challenge_age = float(self.get_parameter("challenge_max_age_sec").value)
+        challenge_age = float(
+            self.get_parameter("challenge_max_age_sec").value
+        )
         challenge_rate = float(self.get_parameter("challenge_rate_hz").value)
         if not math.isfinite(challenge_rate) or challenge_rate <= 0.0:
             raise ValueError("challenge_rate_hz must be finite and > 0")
@@ -148,6 +183,16 @@ class CollisionFfbNode(Node):
                 )
         watchdog_timeout = float(
             self.get_parameter("watchdog_timeout_sec").value
+        )
+        challenge_hardware_armed = self.get_parameter(
+            "challenge_hardware_armed"
+        ).value
+        validate_challenge_hardware_safety(
+            output_mode=self.output_mode,
+            freshness_mode=self.freshness_mode,
+            challenge_hardware_armed=challenge_hardware_armed,
+            challenge_max_age_sec=challenge_age,
+            watchdog_timeout_sec=watchdog_timeout,
         )
         check_rate = float(
             self.get_parameter("watchdog_check_rate_hz").value
@@ -232,6 +277,14 @@ class CollisionFfbNode(Node):
             f"mode={self.output_mode}, command={self.command_topic}, "
             f"status={self.status_topic}, watchdog={watchdog_timeout:.3f}s, "
             f"freshness={self.freshness_mode}; "
+            + (
+                "challenge hardware gate armed; "
+                if (
+                    self.output_mode == "hardware"
+                    and self.freshness_mode == "challenge"
+                )
+                else ""
+            )
             + (
                 "hardware backend armed"
                 if self.output_mode == "hardware"

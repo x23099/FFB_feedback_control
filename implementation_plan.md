@@ -450,6 +450,26 @@ Phase 5へ進む前の実装順（2026-09-16承認済み）:
 
 走行しながらのTTC連動試験は、この計画完了後に別計画として扱う。
 
+challenge方式hardware展開前レビュー（2026-09-24、実装承認済み）:
+
+- 2 PC dry-run r02でchallenge age最大29.89 ms、active 9 sequence一致、fault 0件を確認した。
+- challenge＋hardwareの全面禁止は単純削除せず、起動ごとの専用gate
+  `challenge_hardware_armed=true`を追加する。
+- 同時にchallenge期限とwatchdogを100 ms以下へ制限し、既存の0.05強度上限、
+  120 ms有限effect、writer lock、初回試験gateを維持する。
+- fake backendと回帰試験の完了までは物理出力を行わず、実機試験は改めて承認を得る。
+
+実装結果（2026-09-24）:
+
+- `challenge_hardware_armed`を既定falseで追加し、challenge＋hardwareでは明示trueを必須にした。
+- 同じ組合せではchallenge期限とwatchdogをともに100 ms以下へ制限した。
+- 既存の`hardware_armed`、初回試験gate、0.05上限、120 ms有限effect、writer lockは維持した。
+- 有効tokenでのfake hardware適用、期限切れ、challenge発行例外、watchdog、二重gateを自動試験した。
+- probeもchallenge＋hardwareに対応したが、`--acknowledge-physical-output`を引き続き必須とした。
+- 安全系・probe対象100件がPASSし、変更Pythonファイルのflake8/pydocstyleがPASSした。
+- package全体は機能試験99件PASS、1件skipで、既知の旧ファイルlint 2件だけFAILした。
+- buildおよび試験中にG923をopenせず、物理出力は行っていない。
+
 ## 10. 必須テスト
 
 | 分類 | テスト内容 |

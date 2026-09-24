@@ -22,6 +22,11 @@ Phase 4としてhardware backendを追加し、停止状態のG923で0.03と0.05
 `hardware_initial_test_passed=true`を追加すると上限0.05まで許可する。0.05を超える設定は常に拒否する。
 実機試験の承認と安全準備が終わるまでは使用しない。
 
+PC間時刻差を使わない`freshness_mode=challenge`をhardwareへ接続する場合は、上記に加えて
+`challenge_hardware_armed=true`を起動ごとに明示しなければならない。この組合せでは
+`challenge_max_age_sec`と`watchdog_timeout_sec`をともに0より大きく100 ms以下に固定する。
+専用gateの既定値はfalseで、launchへは自動追加しない。
+
 hardware backendは実機確認済みの矩形波による120 ms以下の有限periodic effect、終了時stop/erase、capability・effect slot検査、
 writer排他lockを実装している。共通lockは`collision_ffb_node`、`ffb_follow`、`spring`、`periodic`へ
 適用され、これらの主要writerは同時起動できない。TTC adapterはAutocenterとGainを変更しない。
@@ -69,6 +74,8 @@ probeは強度0.05、送信時間0.5秒をコード上限とし、終了時は�
 hardwareを期待するprobeは`--expect-output-mode hardware`だけでは起動せず、
 `--acknowledge-physical-output`の追加を要求する。probe自身はadapterを起動しないため、
 物理出力条件は`collision_ffb_node`側の安全gateでも独立に検査される。
+challenge方式でもこの物理出力確認は省略されず、adapter側の
+`challenge_hardware_armed=true`とprobe側の`--acknowledge-physical-output`の両方を必要とする。
 
 受信強度0.25は既定上限0.05へ制限される。最後の妥当なactive指令から100 msを超えると、statusへ
 `action=stop`、`reason=watchdog_timeout`、`output_active=false`を1回出力する。Ctrl+C終了時も
