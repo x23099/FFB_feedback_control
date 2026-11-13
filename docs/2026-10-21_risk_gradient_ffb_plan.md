@@ -5,9 +5,9 @@
 - `/home/robo25/FFB_feedback_control/FFB_feedback_control`（指令・アダプタ）
 - `/home/robo25/theta_ws/RICHO-theta`（認識・リスク・勾配計算）
 
-> **実装状況（2026-11-13）**: Phase 1（勾配計算）、Phase 2（`direction` 伝搬）、Phase 3（`FF_CONSTANT` backend）、Phase 4（`bird_eye` 接続・記録）は実装・単体テスト済み。dry-run と実機確認は未実施。
+> **実装状況（2026-11-13）**: Phase 1（勾配計算）、Phase 2（`direction` 伝搬）、Phase 3（`FF_CONSTANT` backend）、Phase 4（`bird_eye` 接続・記録）は実装・単体テスト済み。**synthetic/replay dry-run は PASS**。実カメラ dry-run と G923 実機確認は未実施。
 >
-> 関連コミット: FFB `5ccd371`（実装）、`5f5caf6`（計画書）、RICHO `41f9a8b`（Phase 2）、`74c87f0`（Phase 4）。
+> 関連コミット: FFB `5ccd371`（実装）、`5f5caf6` / `f28bebd`（計画書）、`21a5b2c`（設定）、RICHO `41f9a8b`（Phase 2）、`74c87f0`（Phase 4）、`913d29c`（replay status）。
 >
 > 本書は実装に合わせて符号規約とPhase 4の方式を更新済み。残作業の設計メモとして維持する。
 
@@ -38,8 +38,9 @@
 | デバイス能力 | `FF_CONSTANT` / `FF_SPRING` / `FF_PERIODIC` 対応 | `implementation_plan.md` 2.2 |
 | 操舵角 | `/handle/steering_norm`, `/handle/steering_angle_deg` を配信済み | `RICHO-theta/src/handle.py` |
 
-**結論**: 指令への方向追加、`FF_CONSTANT` backend、認識側の勾配接続（Phase 4）は実装済み。
-残るのは dry-run での伝搬確認と、実機での方向・強度確認（Phase 5）。
+**結論**: 指令への方向追加、`FF_CONSTANT` backend、認識側の勾配接続（Phase 4）、
+synthetic/replay dry-run は完了。残るのは実カメラ dry-run と、
+G923 実機での方向・強度確認（Phase 5）。
 
 ---
 
@@ -303,11 +304,24 @@ Phase 3 の実装詳細:
 - `publish_collision_ffb()` が direction と gradient 記録を渡す
 - replay が記録済み direction を再送する
 
-### 8.2 dry-run（未実施）
-- `collision_ffb_direction_enabled=1`、`output_mode=dry_run` で確認
-- 30 Hz指令で active が継続
-- `direction` と `gradient_*` が status / log / CSV に残る
-- watchdog 100 ms、期限切れ、重複・逆順で STOP
+### 8.2 dry-run（synthetic/replay は PASS、実カメラは未実施）
+
+**synthetic publisher（30 Hz、G923なし）**
+- `WARNING` / `STEADY` / `direction=-1` → `apply`、`status.direction=-1`
+- `WARNING` / `STEADY` / `direction=+1` → `apply`、`status.direction=+1`
+- `UNKNOWN` / `PULSE` / `direction=+1` → `STOP` / fault
+  （`pulse_request_requires_zero_direction`）
+- `CLEAR` → `direction=0`
+
+**replay（合成CSV、G923なし）**
+- Decision: **PASS**
+- fault 0、最大適用強度 0.050
+- `replayed_commands.csv` と `adapter_status.csv` の両方に `direction` が記録される
+
+**残り**
+- 実カメラ/実トラックでの dry-run
+- `collision_ffb_direction_enabled=1` で `gradient_*` が status / log / CSV に残ることの実環境確認
+- watchdog 100 ms、期限切れ、重複・逆順で STOP（単体テスト済み）
 
 ### 8.3 ハードウェア（未実施、停止状態）
 - 0.03 以下で左右の向きを確認
