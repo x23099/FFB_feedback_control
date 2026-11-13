@@ -171,8 +171,43 @@ def build_periodic_effect(
     )
 
 
+def build_constant_effect(
+    ff_module,
+    ecodes_module,
+    *,
+    effect_id: int,
+    direction: int,
+    normalized_magnitude: float,
+    duration_ms: int,
+):
+    """Build one finite signed constant-force effect without a device.
+
+    ``ff.Constant.level`` is a signed int16, so the force direction is encoded
+    in the level while the effect ``direction`` field stays zero.
+    """
+    direction = int(direction)
+    if direction not in (-1, 1):
+        raise ValueError("constant effect direction must be -1 or +1")
+    duration_ms = int(duration_ms)
+    if not 1 <= duration_ms <= MAX_EFFECT_DURATION_MS:
+        raise ValueError(
+            f"duration_ms must be within 1..{MAX_EFFECT_DURATION_MS}"
+        )
+    magnitude = normalized_to_evdev_magnitude(normalized_magnitude)
+    envelope = ff_module.Envelope(0, 0, 0, 0)
+    constant = ff_module.Constant(direction * magnitude, envelope)
+    return ff_module.Effect(
+        ecodes_module.FF_CONSTANT,
+        int(effect_id),
+        0,
+        ff_module.Trigger(0, 0),
+        ff_module.Replay(duration_ms, 0),
+        ff_module.EffectType(ff_constant_effect=constant),
+    )
+
+
 class EvdevCollisionFfbBackend:
-    """Own one finite periodic effect and its exclusive writer lock."""
+    """Own one finite effect and its exclusive writer lock."""
 
     def __init__(
         self,
@@ -181,6 +216,8 @@ class EvdevCollisionFfbBackend:
         lock_path=DEFAULT_LOCK_PATH,
         effect_duration_ms=DEFAULT_EFFECT_DURATION_MS,
         period_ms=DEFAULT_PERIOD_MS,
+        direction_enabled=False,
+        constant_direction_sign=1,
         input_device_factory=None,
         ecodes_module=None,
         ff_module=None,
@@ -198,6 +235,11 @@ class EvdevCollisionFfbBackend:
             )
         if self.period_ms <= 0:
             raise ValueError("period_ms must be positive")
+        self.direction_enabled = bool(direction_enabled)
+        sign = float(constant_direction_sign)
+        if sign not in (-1.0, 1.0):
+            raise ValueError("constant_direction_sign must be -1 or +1")
+        self.constant_direction_sign = int(sign)
 
         if (
             input_device_factory is None
@@ -219,11 +261,14 @@ class EvdevCollisionFfbBackend:
         self._lock = FfbWriterLock(lock_path)
         self._device = None
         self._effect_id: Optional[int] = None
+        self._effect_kind: Optional[str] = None
         self._closed = False
         self._lock.acquire()
         try:
             self._device = input_device_factory(self.device_path)
-            self._validate_capabilities()
+            self._validate_capabilities(
+                require_constant=self.direction_enabled
+            )
         except Exception:
             if self._device is not None:
                 try:
@@ -239,7 +284,7 @@ class EvdevCollisionFfbBackend:
         """Return the currently owned effect slot, if any."""
         return self._effect_id
 
-    def _validate_capabilities(self) -> None:
+    def _validate_capabilities(self, *, require_constant=False) -> None:
         effects = self._device.capabilities().get(self._ecodes.EV_FF, [])
         if self._ecodes.FF_PERIODIC not in effects:
             raise CollisionFfbBackendError(
@@ -247,29 +292,85 @@ class EvdevCollisionFfbBackend:
             )
         if self._ecodes.FF_SQUARE not in effects:
             raise CollisionFfbBackendError("device does not support FF_SQUARE")
+        if require_constant and self._ecodes.FF_CONSTANT not in effects:
+            raise CollisionFfbBackendError(
+                "device does not support FF_CONSTANT"
+            )
         if int(self._device.ff_effects_count) < 1:
             raise CollisionFfbBackendError(
                 "device reports no effect slots"
+            )
+
+    def _require_constant_capability(self) -> None:
+        effects = self._device.capabilities().get(self._ecodes.EV_FF, [])
+        if self._ecodes.FF_CONSTANT not in effects:
+            raise CollisionFfbBackendError(
+                "device does not support FF_CONSTANT"
             )
 
     def apply(
         self,
         normalized_magnitude: float,
         pattern: FeedbackPattern,
+        direction: int = 0,
     ) -> None:
         """Upload or refresh one finite effect, then play it once."""
         if self._closed or self._device is None:
             raise CollisionFfbBackendError("hardware backend is closed")
+        direction = int(direction)
+        if direction not in (-1, 0, 1):
+            raise ValueError("direction must be -1, 0, or +1")
+        if direction != 0:
+            if not self.direction_enabled:
+                raise CollisionFfbBackendError(
+                    "directional force feedback is disabled"
+                )
+            try:
+                pattern = FeedbackPattern(pattern)
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"unsupported feedback pattern: {pattern}"
+                ) from error
+            if pattern not in {
+                FeedbackPattern.STEADY,
+                FeedbackPattern.STEADY_HOLD,
+            }:
+                raise ValueError(
+                    "constant direction requires a steady pattern"
+                )
+            self._require_constant_capability()
+            effect_kind = "constant"
+        else:
+            effect_kind = "periodic"
+
+        if (
+            self._effect_kind is not None
+            and self._effect_kind != effect_kind
+        ):
+            errors = self._best_effort_stop_and_erase()
+            if errors:
+                raise CollisionFfbBackendError("; ".join(errors))
+
         requested_id = self._effect_id if self._effect_id is not None else -1
-        effect = build_periodic_effect(
-            self._ff,
-            self._ecodes,
-            effect_id=requested_id,
-            pattern=pattern,
-            normalized_magnitude=normalized_magnitude,
-            period_ms=self.period_ms,
-            duration_ms=self.effect_duration_ms,
-        )
+        if effect_kind == "constant":
+            effect = build_constant_effect(
+                self._ff,
+                self._ecodes,
+                effect_id=requested_id,
+                direction=direction * self.constant_direction_sign,
+                normalized_magnitude=normalized_magnitude,
+                duration_ms=self.effect_duration_ms,
+            )
+        else:
+            effect = build_periodic_effect(
+                self._ff,
+                self._ecodes,
+                effect_id=requested_id,
+                pattern=pattern,
+                normalized_magnitude=normalized_magnitude,
+                period_ms=self.period_ms,
+                duration_ms=self.effect_duration_ms,
+            )
         try:
             updated_id = self._device.upload_effect(effect)
             if not isinstance(updated_id, int) or updated_id < 0:
@@ -283,6 +384,7 @@ class EvdevCollisionFfbBackend:
                 )
             self._effect_id = updated_id
             self._device.write(self._ecodes.EV_FF, self._effect_id, 1)
+            self._effect_kind = effect_kind
         except Exception as error:
             self._best_effort_stop_and_erase()
             if isinstance(error, CollisionFfbBackendError):
@@ -299,6 +401,7 @@ class EvdevCollisionFfbBackend:
         if extra_effect_id is not None and extra_effect_id not in effect_ids:
             effect_ids.append(extra_effect_id)
         self._effect_id = None
+        self._effect_kind = None
         for effect_id in effect_ids:
             try:
                 self._device.write(self._ecodes.EV_FF, effect_id, 0)

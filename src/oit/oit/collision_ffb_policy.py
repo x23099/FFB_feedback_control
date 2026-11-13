@@ -58,6 +58,7 @@ class CollisionFfbRequest:
     active: bool
     normalized_magnitude: float
     reason: str = ""
+    direction: int = 0
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,7 @@ class CollisionFfbDecision:
     reason: str
     sequence: Optional[int]
     fault: bool = False
+    direction: int = 0
 
 
 _EXPECTED_STATE = {
@@ -139,6 +141,18 @@ class CollisionFfbSafetyPolicy:
             raise ValueError(f"{name} must be finite and >= 0")
         return parsed
 
+    @staticmethod
+    def _validate_direction(direction: int) -> int:
+        if isinstance(direction, bool):
+            raise ValueError("direction_must_be_int8")
+        try:
+            value = int(direction)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"unknown_direction:{direction}") from error
+        if value != direction or value not in (-1, 0, 1):
+            raise ValueError(f"unknown_direction:{direction}")
+        return value
+
     @property
     def active(self) -> bool:
         """Return whether the most recent valid request is active."""
@@ -166,7 +180,7 @@ class CollisionFfbSafetyPolicy:
                 current_time_sec,
                 "current_time_sec",
             )
-            risk_level, pattern = self._validate_request(
+            risk_level, pattern, direction = self._validate_request(
                 request,
                 received_monotonic_sec=received_monotonic_sec,
                 current_time_sec=current_time_sec,
@@ -189,6 +203,7 @@ class CollisionFfbSafetyPolicy:
                 pattern=FeedbackPattern.OFF,
                 reason=f"inactive:{risk_level.name.lower()}",
                 sequence=int(request.sequence),
+                direction=0,
             )
 
         magnitude = min(
@@ -204,6 +219,7 @@ class CollisionFfbSafetyPolicy:
             pattern=pattern,
             reason=str(request.reason or risk_level.name.lower()),
             sequence=int(request.sequence),
+            direction=direction,
         )
 
     def poll_watchdog(self, now_monotonic_sec: float) -> CollisionFfbDecision:
@@ -253,7 +269,7 @@ class CollisionFfbSafetyPolicy:
         *,
         received_monotonic_sec: float,
         current_time_sec: float,
-    ) -> tuple[RiskLevel, FeedbackPattern]:
+    ) -> tuple[RiskLevel, FeedbackPattern, int]:
         source = str(request.source or "").strip()
         if source != self.expected_source:
             raise ValueError(
@@ -297,6 +313,7 @@ class CollisionFfbSafetyPolicy:
             pattern = FeedbackPattern(request.pattern)
         except (TypeError, ValueError) as error:
             raise ValueError(f"unknown_pattern:{request.pattern}") from error
+        direction = self._validate_direction(request.direction)
 
         expected_active, expected_pattern = _EXPECTED_STATE[risk_level]
         if bool(request.active) is not expected_active:
@@ -316,7 +333,11 @@ class CollisionFfbSafetyPolicy:
             raise ValueError("active_request_requires_positive_magnitude")
         if not expected_active and magnitude != 0.0:
             raise ValueError("inactive_request_requires_zero_magnitude")
-        return risk_level, pattern
+        if not expected_active and direction != 0:
+            raise ValueError("inactive_request_requires_zero_direction")
+        if pattern is FeedbackPattern.PULSE and direction != 0:
+            raise ValueError("pulse_request_requires_zero_direction")
+        return risk_level, pattern, direction
 
     def _can_reset_sequence(
         self,
@@ -357,6 +378,7 @@ class CollisionFfbSafetyPolicy:
             reason=f"invalid_request:{reason}",
             sequence=sequence,
             fault=True,
+            direction=0,
         )
 
     def _force_stop(self, reason: str, *, fault: bool) -> CollisionFfbDecision:
@@ -369,6 +391,7 @@ class CollisionFfbSafetyPolicy:
             reason=reason,
             sequence=self._last_sequence,
             fault=fault,
+            direction=0,
         )
 
     def _no_action(self, reason: str) -> CollisionFfbDecision:
@@ -379,4 +402,5 @@ class CollisionFfbSafetyPolicy:
             pattern=FeedbackPattern.OFF,
             reason=reason,
             sequence=self._last_sequence,
+            direction=0,
         )

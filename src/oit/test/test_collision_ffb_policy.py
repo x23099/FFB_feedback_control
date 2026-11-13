@@ -21,6 +21,7 @@ def request(
     active=True,
     magnitude=0.25,
     source="bird_eye",
+    direction=0,
 ):
     return CollisionFfbRequest(
         sequence=sequence,
@@ -31,6 +32,7 @@ def request(
         active=active,
         normalized_magnitude=magnitude,
         reason="test",
+        direction=direction,
     )
 
 
@@ -74,6 +76,59 @@ def test_active_state_patterns_are_accepted(risk, pattern):
 
     assert decision.action is OutputAction.APPLY
     assert decision.pattern is pattern
+
+
+@pytest.mark.parametrize("direction", [-1, 0, 1])
+def test_direction_propagates_to_active_decision(direction):
+    policy = CollisionFfbSafetyPolicy()
+    decision = process(policy, request(direction=direction))
+
+    assert decision.action is OutputAction.APPLY
+    assert decision.direction == direction
+
+
+@pytest.mark.parametrize("direction", [-2, 2, 1.5, True, "1", None])
+def test_invalid_direction_fails_closed(direction):
+    policy = CollisionFfbSafetyPolicy()
+    decision = process(policy, request(direction=direction))
+
+    assert decision.action is OutputAction.STOP
+    assert decision.fault
+    assert decision.direction == 0
+
+
+def test_inactive_request_requires_zero_direction():
+    policy = CollisionFfbSafetyPolicy()
+    decision = process(
+        policy,
+        request(
+            risk=RiskLevel.CLEAR,
+            pattern=FeedbackPattern.OFF,
+            active=False,
+            magnitude=0.0,
+            direction=1,
+        ),
+    )
+
+    assert decision.action is OutputAction.STOP
+    assert decision.fault
+
+
+def test_pulse_request_requires_zero_direction():
+    policy = CollisionFfbSafetyPolicy()
+    decision = process(
+        policy,
+        request(
+            risk=RiskLevel.UNKNOWN,
+            pattern=FeedbackPattern.PULSE,
+            active=True,
+            magnitude=0.15,
+            direction=-1,
+        ),
+    )
+
+    assert decision.action is OutputAction.STOP
+    assert decision.fault
 
 
 @pytest.mark.parametrize("risk", [RiskLevel.CLEAR, RiskLevel.PATH])

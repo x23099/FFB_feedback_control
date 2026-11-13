@@ -126,6 +126,8 @@ class CollisionFfbNode(Node):
         self.declare_parameter("challenge_hardware_armed", False)
         self.declare_parameter("expected_source", "bird_eye")
         self.declare_parameter("max_magnitude", 0.05)
+        self.declare_parameter("direction_enabled", False)
+        self.declare_parameter("constant_direction_sign", 1.0)
         self.declare_parameter("watchdog_timeout_sec", 0.1)
         self.declare_parameter("maximum_message_age_sec", 0.1)
         self.declare_parameter("future_tolerance_sec", 0.05)
@@ -181,6 +183,18 @@ class CollisionFfbNode(Node):
                     f"{INITIAL_HARDWARE_MAX_MAGNITUDE:.2f} requires "
                     "hardware_initial_test_passed=true"
                 )
+        direction_enabled_value = self.get_parameter(
+            "direction_enabled"
+        ).value
+        if not isinstance(direction_enabled_value, bool):
+            raise ValueError("direction_enabled must be a boolean")
+        self.direction_enabled = direction_enabled_value
+        direction_sign = float(
+            self.get_parameter("constant_direction_sign").value
+        )
+        if direction_sign not in (-1.0, 1.0):
+            raise ValueError("constant_direction_sign must be -1 or +1")
+        self.constant_direction_sign = int(direction_sign)
         watchdog_timeout = float(
             self.get_parameter("watchdog_timeout_sec").value
         )
@@ -221,6 +235,8 @@ class CollisionFfbNode(Node):
         self._current_time_clock = current_time_clock
         self._last_source = ""
         self._last_requested_magnitude = 0.0
+        self._last_requested_direction = 0
+        self._direction_disabled_warned = False
         self._last_log_signature = None
         self._shutdown_published = False
         self.hardware_backend = None
@@ -242,6 +258,8 @@ class CollisionFfbNode(Node):
                     self.get_parameter("effect_duration_ms").value
                 ),
                 period_ms=int(self.get_parameter("effect_period_ms").value),
+                direction_enabled=self.direction_enabled,
+                constant_direction_sign=self.constant_direction_sign,
             )
 
         qos = collision_command_qos()
@@ -326,8 +344,21 @@ class CollisionFfbNode(Node):
 
     def _on_command(self, message: CollisionFfbCommand) -> None:
         requested_magnitude = float(message.normalized_magnitude)
+        requested_direction = int(getattr(message, "direction", 0))
+        if (
+            self.output_mode == "hardware"
+            and not self.direction_enabled
+            and requested_direction != 0
+        ):
+            if not self._direction_disabled_warned:
+                self.get_logger().warning(
+                    "direction is ignored because direction_enabled=false"
+                )
+                self._direction_disabled_warned = True
+            requested_direction = 0
         self._last_source = str(message.source)
         self._last_requested_magnitude = requested_magnitude
+        self._last_requested_direction = requested_direction
 
         try:
             request = CollisionFfbRequest(
@@ -339,6 +370,7 @@ class CollisionFfbNode(Node):
                 active=bool(message.active),
                 normalized_magnitude=requested_magnitude,
                 reason=message.reason,
+                direction=requested_direction,
             )
             received_monotonic = float(self._monotonic_clock())
             if self.challenge_tracker is not None:
@@ -399,6 +431,7 @@ class CollisionFfbNode(Node):
                 self.hardware_backend.apply(
                     decision.normalized_magnitude,
                     decision.pattern,
+                    decision.direction,
                 )
             elif decision.action is OutputAction.STOP:
                 self.hardware_backend.stop()
@@ -443,6 +476,9 @@ class CollisionFfbNode(Node):
             else 0.0
         )
         status.pattern = int(decision.pattern)
+        status.direction = (
+            int(decision.direction) if status.output_active else 0
+        )
         status.reason = decision.reason
         status.fault = decision.fault
         self.status_publisher.publish(status)
@@ -456,14 +492,17 @@ class CollisionFfbNode(Node):
             f"output_active={status.output_active} "
             f"requested={status.requested_magnitude:.3f} "
             f"applied={status.applied_magnitude:.3f} "
-            f"pattern={status.pattern} reason={status.reason} "
-            f"fault={status.fault}"
+            f"pattern={status.pattern} direction={status.direction} "
+            f"requested_direction={self._last_requested_direction} "
+            f"reason={status.reason} fault={status.fault}"
         )
         signature = (
             status.action,
             status.command_active,
             status.output_active,
             status.pattern,
+            status.direction,
+            self._last_requested_direction,
             status.reason,
             status.fault,
         )

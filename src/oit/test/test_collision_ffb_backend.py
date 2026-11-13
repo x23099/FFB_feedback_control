@@ -6,6 +6,7 @@ from oit.collision_ffb_backend import (
     CollisionFfbBackendError,
     EvdevCollisionFfbBackend,
     FfbWriterLock,
+    build_constant_effect,
     build_periodic_effect,
     normalized_to_evdev_magnitude,
 )
@@ -21,6 +22,7 @@ class FakeStruct:
 class FakeFf:
     Envelope = FakeStruct
     Periodic = FakeStruct
+    Constant = FakeStruct
     Effect = FakeStruct
     Trigger = FakeStruct
     Replay = FakeStruct
@@ -30,8 +32,16 @@ class FakeFf:
 class FakeEcodes:
     EV_FF = 21
     FF_PERIODIC = 81
+    FF_CONSTANT = 82
     FF_SINE = 90
     FF_SQUARE = 88
+
+
+CONSTANT_EFFECTS = [
+    FakeEcodes.FF_PERIODIC,
+    FakeEcodes.FF_SQUARE,
+    FakeEcodes.FF_CONSTANT,
+]
 
 
 class FakeDevice:
@@ -263,3 +273,151 @@ def test_invalid_effect_lifetime_is_rejected_before_device_open(tmp_path):
         )
 
     assert not called.value
+
+
+def test_constant_effect_uses_signed_level_and_finite_replay():
+    effect = build_constant_effect(
+        FakeFf,
+        FakeEcodes,
+        effect_id=-1,
+        direction=-1,
+        normalized_magnitude=0.05,
+        duration_ms=120,
+    )
+
+    assert effect.args[0] == FakeEcodes.FF_CONSTANT
+    assert effect.args[1] == -1
+    assert effect.args[2] == 0
+    assert effect.args[4].args[0] == 120
+    constant = effect.args[5].kwargs["ff_constant_effect"]
+    assert constant.args[0] == -normalized_to_evdev_magnitude(0.05)
+
+
+@pytest.mark.parametrize("direction", [-2, 0, 2])
+def test_constant_effect_rejects_invalid_direction(direction):
+    with pytest.raises(ValueError, match="direction"):
+        build_constant_effect(
+            FakeFf,
+            FakeEcodes,
+            effect_id=-1,
+            direction=direction,
+            normalized_magnitude=0.05,
+            duration_ms=120,
+        )
+
+
+def test_directional_apply_uses_constant_effect(tmp_path):
+    device = FakeDevice("fake", effects=CONSTANT_EFFECTS)
+    backend = backend_for(
+        device,
+        tmp_path / "writer.lock",
+        direction_enabled=True,
+    )
+
+    backend.apply(0.05, FeedbackPattern.STEADY, -1)
+
+    assert backend.effect_id == 7
+    assert device.writes == [(FakeEcodes.EV_FF, 7, 1)]
+    effect = device.uploaded[-1]
+    assert effect.args[0] == FakeEcodes.FF_CONSTANT
+    constant = effect.args[5].kwargs["ff_constant_effect"]
+    assert constant.args[0] == -normalized_to_evdev_magnitude(0.05)
+    backend.close()
+
+
+def test_constant_direction_sign_flips_level(tmp_path):
+    device = FakeDevice("fake", effects=CONSTANT_EFFECTS)
+    backend = backend_for(
+        device,
+        tmp_path / "writer.lock",
+        direction_enabled=True,
+        constant_direction_sign=-1,
+    )
+
+    backend.apply(0.05, FeedbackPattern.STEADY, -1)
+
+    constant = device.uploaded[-1].args[5].kwargs["ff_constant_effect"]
+    assert constant.args[0] == normalized_to_evdev_magnitude(0.05)
+    backend.close()
+
+
+def test_direction_zero_keeps_periodic_effect(tmp_path):
+    device = FakeDevice("fake", effects=CONSTANT_EFFECTS)
+    backend = backend_for(
+        device,
+        tmp_path / "writer.lock",
+        direction_enabled=True,
+    )
+
+    backend.apply(0.05, FeedbackPattern.STEADY, 0)
+
+    effect = device.uploaded[-1]
+    assert effect.args[0] == FakeEcodes.FF_PERIODIC
+    periodic = effect.args[5].kwargs["ff_periodic_effect"]
+    assert periodic.args[2] == normalized_to_evdev_magnitude(0.05)
+    backend.close()
+
+
+def test_direction_requires_steady_pattern(tmp_path):
+    device = FakeDevice("fake", effects=CONSTANT_EFFECTS)
+    backend = backend_for(
+        device,
+        tmp_path / "writer.lock",
+        direction_enabled=True,
+    )
+
+    with pytest.raises(ValueError, match="steady"):
+        backend.apply(0.05, FeedbackPattern.PULSE, 1)
+
+    assert device.uploaded == []
+    backend.close()
+
+
+def test_direction_is_rejected_when_disabled(tmp_path):
+    device = FakeDevice("fake", effects=CONSTANT_EFFECTS)
+    backend = backend_for(device, tmp_path / "writer.lock")
+
+    with pytest.raises(CollisionFfbBackendError, match="disabled"):
+        backend.apply(0.05, FeedbackPattern.STEADY, 1)
+
+    assert device.uploaded == []
+    backend.close()
+
+
+def test_direction_enabled_requires_constant_capability(tmp_path):
+    device = FakeDevice(
+        "fake",
+        effects=[FakeEcodes.FF_PERIODIC, FakeEcodes.FF_SQUARE],
+    )
+
+    with pytest.raises(CollisionFfbBackendError, match="FF_CONSTANT"):
+        backend_for(
+            device,
+            tmp_path / "writer.lock",
+            direction_enabled=True,
+        )
+
+    assert device.uploaded == []
+    assert device.closed
+
+
+def test_switching_periodic_and_constant_reallocates_slot(tmp_path):
+    device = FakeDevice("fake", effects=CONSTANT_EFFECTS)
+    backend = backend_for(
+        device,
+        tmp_path / "writer.lock",
+        direction_enabled=True,
+    )
+
+    backend.apply(0.03, FeedbackPattern.STEADY)
+    backend.apply(0.03, FeedbackPattern.STEADY, 1)
+
+    assert [effect.args[1] for effect in device.uploaded] == [-1, -1]
+    assert device.erased == [7]
+    assert device.writes == [
+        (FakeEcodes.EV_FF, 7, 1),
+        (FakeEcodes.EV_FF, 7, 0),
+        (FakeEcodes.EV_FF, 7, 1),
+    ]
+    assert device.uploaded[-1].args[0] == FakeEcodes.FF_CONSTANT
+    backend.close()

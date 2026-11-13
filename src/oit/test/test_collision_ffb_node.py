@@ -33,10 +33,10 @@ class FakeHardwareBackend:
         self.close_calls = 0
         self.fail_apply = False
 
-    def apply(self, magnitude, pattern):
+    def apply(self, magnitude, pattern, direction=0):
         if self.fail_apply:
             raise OSError("synthetic hardware failure")
-        self.applied.append((magnitude, pattern))
+        self.applied.append((magnitude, pattern, direction))
 
     def stop(self):
         self.stop_calls += 1
@@ -59,6 +59,8 @@ def node_factory():
         challenge_max_age_sec=0.1,
         watchdog_timeout_sec=0.1,
         max_magnitude=0.05,
+        direction_enabled=False,
+        constant_direction_sign=1.0,
     ):
         context = Context()
         rclpy.init(args=[], context=context)
@@ -87,6 +89,14 @@ def node_factory():
                         value=watchdog_timeout_sec,
                     ),
                     Parameter("max_magnitude", value=max_magnitude),
+                    Parameter(
+                        "direction_enabled",
+                        value=direction_enabled,
+                    ),
+                    Parameter(
+                        "constant_direction_sign",
+                        value=constant_direction_sign,
+                    ),
                     Parameter(
                         "device_path",
                         value=(
@@ -124,6 +134,7 @@ def command(
     active=True,
     magnitude=0.25,
     source="bird_eye",
+    direction=0,
     receiver_session_id=0,
     receiver_token=0,
     stamp_sec=10,
@@ -136,6 +147,7 @@ def command(
     message.pattern = pattern
     message.active = active
     message.normalized_magnitude = magnitude
+    message.direction = direction
     message.reason = "test"
     message.receiver_session_id = receiver_session_id
     message.receiver_token = receiver_token
@@ -194,9 +206,10 @@ def test_challenge_hardware_applies_with_valid_token(
         receiver_token=issued.token,
     ))
 
-    magnitude, pattern = node.hardware_backend.applied[0]
+    magnitude, pattern, direction = node.hardware_backend.applied[0]
     assert magnitude == pytest.approx(0.03)
     assert pattern == CollisionFfbCommand.STEADY
+    assert direction == 0
     assert publisher.messages[-1].output_active
     assert not publisher.messages[-1].fault
 
@@ -482,6 +495,91 @@ def test_hardware_mode_uses_fake_backend_with_initial_cap(node_factory):
     assert publisher.messages[0].output_active
     assert publisher.messages[0].applied_magnitude == pytest.approx(0.03)
     assert not publisher.messages[1].output_active
+
+
+def test_dry_run_reports_direction_in_status(node_factory):
+    node, publisher, _clocks = node_factory()
+
+    node._on_command(command(1, direction=-1))
+
+    status = publisher.messages[-1]
+    assert status.output_active
+    assert status.direction == -1
+
+
+def test_inactive_command_with_direction_fails_closed(node_factory):
+    node, publisher, _clocks = node_factory()
+
+    node._on_command(command(
+        1,
+        risk=CollisionFfbCommand.CLEAR,
+        pattern=CollisionFfbCommand.OFF,
+        active=False,
+        magnitude=0.0,
+        direction=1,
+    ))
+
+    status = publisher.messages[-1]
+    assert status.action == "stop"
+    assert status.fault
+    assert "inactive_request_requires_zero_direction" in status.reason
+
+
+def test_invalid_direction_fails_closed(node_factory):
+    node, publisher, _clocks = node_factory()
+
+    node._on_command(command(1, direction=2))
+
+    status = publisher.messages[-1]
+    assert status.action == "stop"
+    assert not status.output_active
+    assert status.fault
+    assert "unknown_direction" in status.reason
+
+
+def test_hardware_mode_applies_direction(node_factory):
+    node, publisher, _clocks = node_factory(
+        mode="hardware",
+        hardware_armed=True,
+        max_magnitude=0.03,
+        direction_enabled=True,
+    )
+
+    node._on_command(command(1, direction=1))
+
+    backend = node.hardware_backend
+    assert backend.applied[0][0] == pytest.approx(0.03)
+    assert backend.applied[0][2] == 1
+    assert publisher.messages[-1].direction == 1
+    assert backend.kwargs["direction_enabled"] is True
+    assert backend.kwargs["constant_direction_sign"] == 1
+
+
+def test_hardware_mode_without_direction_enabled_forces_zero(node_factory):
+    node, publisher, _clocks = node_factory(
+        mode="hardware",
+        hardware_armed=True,
+        max_magnitude=0.03,
+        direction_enabled=False,
+    )
+
+    node._on_command(command(1, direction=-1))
+
+    backend = node.hardware_backend
+    assert backend.applied[0][2] == 0
+    assert publisher.messages[-1].direction == 0
+
+
+def test_hardware_constant_direction_sign_is_passed(node_factory):
+    node, _publisher, _clocks = node_factory(
+        mode="hardware",
+        hardware_armed=True,
+        max_magnitude=0.03,
+        direction_enabled=True,
+        constant_direction_sign=-1.0,
+    )
+
+    assert node.hardware_backend.kwargs["constant_direction_sign"] == -1
 
 
 def test_hardware_backend_failure_is_reported_and_stopped(node_factory):

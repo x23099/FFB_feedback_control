@@ -18,6 +18,13 @@ uint8 pattern
 
 bool active
 float32 normalized_magnitude
+
+# Steering-risk gradient direction.
+# -1: left cut is more dangerous (increase left-cut resistance)
+#  0: no directional force (legacy periodic behavior)
+# +1: right cut is more dangerous (increase right-cut resistance)
+int8 direction
+
 string reason
 
 # Receiver-issued freshness proof. Zero values are invalid in challenge mode.
