@@ -12,6 +12,8 @@ collision_ffb_node:
     challenge_hardware_armed: false
     expected_source: bird_eye
     max_magnitude: 0.05
+    direction_enabled: false
+    constant_direction_sign: 1.0
     watchdog_timeout_sec: 0.1
     maximum_message_age_sec: 0.1
     future_tolerance_sec: 0.05
