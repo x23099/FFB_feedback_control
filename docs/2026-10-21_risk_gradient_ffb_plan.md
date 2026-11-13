@@ -5,11 +5,11 @@
 - `/home/robo25/FFB_feedback_control/FFB_feedback_control`（指令・アダプタ）
 - `/home/robo25/theta_ws/RICHO-theta`（認識・リスク・勾配計算）
 
-> **実装状況（2026-11-13）**: Phase 1（勾配計算）、Phase 2（`direction` 伝搬）、Phase 3（`FF_CONSTANT` backend）は実装・単体テスト済み。Phase 4（`bird_eye` 接続）以降は未着手。実機確認も未実施。
+> **実装状況（2026-11-13）**: Phase 1（勾配計算）、Phase 2（`direction` 伝搬）、Phase 3（`FF_CONSTANT` backend）、Phase 4（`bird_eye` 接続・記録）は実装・単体テスト済み。dry-run と実機確認は未実施。
 >
-> 関連コミット: FFB `5ccd371`、RICHO `41f9a8b`。
+> 関連コミット: FFB `5ccd371`（実装）、`5f5caf6`（計画書）、RICHO `41f9a8b`（Phase 2）、`74c87f0`（Phase 4）。
 >
-> 本書は実装に合わせて符号規約を更新済み。残作業の設計メモとして維持する。
+> 本書は実装に合わせて符号規約とPhase 4の方式を更新済み。残作業の設計メモとして維持する。
 
 ---
 
@@ -38,8 +38,8 @@
 | デバイス能力 | `FF_CONSTANT` / `FF_SPRING` / `FF_PERIODIC` 対応 | `implementation_plan.md` 2.2 |
 | 操舵角 | `/handle/steering_norm`, `/handle/steering_angle_deg` を配信済み | `RICHO-theta/src/handle.py` |
 
-**結論**: 指令への方向追加と `FF_CONSTANT` backend は実装済み。
-残るのは認識側の勾配接続（Phase 4）と、実機での方向・強度確認（Phase 5）。
+**結論**: 指令への方向追加、`FF_CONSTANT` backend、認識側の勾配接続（Phase 4）は実装済み。
+残るのは dry-run での伝搬確認と、実機での方向・強度確認（Phase 5）。
 
 ---
 
@@ -126,7 +126,7 @@ base = 0.25 (WARNING) / 0.40 (CRITICAL) / 0.15 (UNKNOWN, pulse)
 
 > 実装上の注記: Phase 2 では `(1 ± k·ĝ)` の大きさ変調はまだ送らず、
 > `ĝ` の符号を `direction` に縮約し、`normalized_magnitude` は左右で共通値を使う。
-> 大きさ変調（`k`）は Phase 4 以降の実験条件として追加する。
+> 大きさ変調（`k`）は実機実験の条件として追加する。
 
 ### 5.2 実装方式
 
@@ -210,7 +210,8 @@ Phase 3 の実装詳細:
   - `predict_unicycle_path(v, ω−Δ / ω / ω+Δ)` → `assess_path_collision()` × 3
   - `path_eta_sec` を TTC 代理として `R` を計算
   - 勾配 `g`、正規化 `ĝ`、左右のリスク・ETA・corridor を返す
-  - `path_factory` 注入により、Phase 4 で `bird_eye.py` のωリマップを再利用可能
+  - `path_factory` 注入により、呼び出し側で予測パラメータを差し替え可能
+    （Phase 4 では実効ヨーを中心に raw unicycle の候補経路を生成）
 - `SteeringGradientFilter`（EMA・デッドバンド・CLEAR/無効時リセット）を追加
 - `gradient_to_direction()` を追加
   - `ĝ > +0.1` → `-1`（**左が危険**、左切りを重くする）
@@ -225,13 +226,29 @@ Phase 3 の実装詳細:
   - 範囲外と inactive時の非ゼロ方向を拒否
   - diagnostics に `intent_direction` を追加
 
-**Phase 4（未着手）**
+**Phase 4（実装済み）**
 - `bird_eye.py` の `draw_predicted_path_on_bev()` から
-  `evaluate_candidate_steering()` を呼び、`publish_risk(direction=...)` に接続
-- `collision_ffb_direction_enabled`（カメラ側）を追加
-- `bird_eye.py` のωリマップを `path_factory` として注入
-- 記録CSVに `collision_ffb_gradient_raw` / `collision_ffb_gradient_normalized` を追加
-- 設定ファイルに `gradient_*` パラメータを追加（Δ, G_SCALE, EMA, deadband）
+  `update_steering_gradient()` を呼び、`publish_collision_ffb()` で
+  `publish_risk(direction=...)` に接続
+- `collision_ffb_direction_enabled`（カメラ側、既定0）を追加
+- 勾配の中心は `last_prediction_angular_radps`（表示経路の実効ヨー）とし、
+  候補はその `±Δ` を **raw unicycle** で評価する
+  - 表示用のコマンド→ヨーリマップは中心経路にのみ適用済み
+  - 候補にリマップを再適用すると、低速度・小舵角で勾配が潰れるため
+- `remap_command_angular()` をモジュール関数に切り出し、
+  `predict_path_points()` とオフラインreplayで共有
+- 記録CSVに以下を追加
+  - `collision_ffb_direction`
+  - `collision_ffb_gradient_raw`
+  - `collision_ffb_gradient_normalized`
+  - `collision_ffb_gradient_filtered`
+  - `collision_ffb_gradient_reason`
+- `replay_collision_ffb_commands.py` で記録済み `direction` を再送
+- 設定に `collision_ffb_gradient_*`（Δ, G_SCALE, EMA, deadband,
+  prediction_time, step）を追加
+
+> Phase 4 の単体テストで、`Δ` をコマンド空間に置くと表示リマップの圧縮で
+> 勾配が0になりやすいことを確認した。そのため `Δ` は実効ヨー空間に置く。
 
 ---
 
@@ -278,9 +295,18 @@ Phase 3 の実装詳細:
 - 範囲外・inactive時の非ゼロ方向を拒否
 - PULSE で direction を0にすること
 
+**bird_eye 接続（Phase 4）**
+- 左障害物で `direction=-1`、右障害物で `direction=+1`
+- `collision_ffb_direction_enabled=0`、トラックなし、無効測定でリセット
+- CLEAR / PATH で勾配0
+- `remap_command_angular()` と `predict_path_points()` の一致
+- `publish_collision_ffb()` が direction と gradient 記録を渡す
+- replay が記録済み direction を再送する
+
 ### 8.2 dry-run（未実施）
+- `collision_ffb_direction_enabled=1`、`output_mode=dry_run` で確認
 - 30 Hz指令で active が継続
-- `direction` が status / log に残る
+- `direction` と `gradient_*` が status / log / CSV に残る
 - watchdog 100 ms、期限切れ、重複・逆順で STOP
 
 ### 8.3 ハードウェア（未実施、停止状態）
