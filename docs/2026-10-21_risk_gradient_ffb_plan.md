@@ -5,7 +5,7 @@
 - `/home/robo25/FFB_feedback_control/FFB_feedback_control`（指令・アダプタ）
 - `/home/robo25/theta_ws/RICHO-theta`（認識・リスク・勾配計算）
 
-> **実装状況（2026-11-13）**: Phase 1（勾配計算）、Phase 2（`direction` 伝搬）、Phase 3（`FF_CONSTANT` backend）、Phase 4（`bird_eye` 接続・記録）は実装・単体テスト済み。**synthetic/replay dry-run は PASS**。実カメラ dry-run と G923 実機確認は未実施。
+> **実装状況（2026-11-13）**: Phase 1（勾配計算）、Phase 2（`direction` 伝搬）、Phase 3（`FF_CONSTANT` backend）、Phase 4（`bird_eye` 接続・記録）は実装・単体テスト済み。**synthetic/replay dry-run と camera-side synthetic-track dry-run は PASS**。実カメラ動画と G923 実機確認は未実施。
 >
 > 関連コミット: FFB `5ccd371`（実装）、`5f5caf6` / `f28bebd`（計画書）、`21a5b2c`（設定）、RICHO `41f9a8b`（Phase 2）、`74c87f0`（Phase 4）、`913d29c`（replay status）。
 >
@@ -39,8 +39,8 @@
 | 操舵角 | `/handle/steering_norm`, `/handle/steering_angle_deg` を配信済み | `RICHO-theta/src/handle.py` |
 
 **結論**: 指令への方向追加、`FF_CONSTANT` backend、認識側の勾配接続（Phase 4）、
-synthetic/replay dry-run は完了。残るのは実カメラ dry-run と、
-G923 実機での方向・強度確認（Phase 5）。
+synthetic/replay dry-run、camera-side synthetic-track dry-run は完了。
+残るのは実カメラ動画での確認と、G923 実機での方向・強度確認（Phase 5）。
 
 ---
 
@@ -317,6 +317,17 @@ Phase 3 の実装詳細:
 - Decision: **PASS**
 - fault 0、最大適用強度 0.050
 - `replayed_commands.csv` と `adapter_status.csv` の両方に `direction` が記録される
+
+**camera-side synthetic track（G923なし）**
+- `bird_eye.update_steering_gradient()` → `publish_collision_ffb()`
+  → 実 `CollisionFfbPublisherBridge` → dry-run node
+- 左トラック: `raw=+0.649`、`filtered=+0.646`、`direction=-1`
+- 右トラック: `raw=-0.649`、`filtered=-0.646`、`direction=+1`
+- node は `applied=0.050`、fault 0、close 時 `direction=0`
+
+実カメラ動画での dry-run は、利用可能な録画に
+「移動する360映像＋有効なブルートラック」がなかったため未実施。
+`bird_eye` の勾配計算・publisher 接続自体は上記の合成トラックで確認済み。
 
 **残り**
 - 実カメラ/実トラックでの dry-run
