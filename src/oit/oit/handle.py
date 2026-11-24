@@ -102,6 +102,11 @@ class HandleNode(Node):
             705: 'R',
         }
 
+        # シフトノブを使わずにATのD/Rレンジへ入るボタン.
+        # G923 PS版: 294=R2, 295=L2.
+        self.at_d_range_code = 294
+        self.at_r_range_code = 295
+
         # モード切り替えボタン.
         self.mode_switch_code = 712
 
@@ -864,6 +869,15 @@ class HandleNode(Node):
         """
         ATモードのセレクターとパドルシフトを処理する.
         """
+        # シフトノブを使わずにD/Rレンジを選択する.
+        if code == self.at_d_range_code and pressed:
+            self.toggle_at_range('D')
+            return
+
+        if code == self.at_r_range_code and pressed:
+            self.toggle_at_range('R')
+            return
+
         # 右パドルで1段上げる.
         if code == self.paddle_up_code and pressed:
             self.shift_at_gear(1)
@@ -886,6 +900,17 @@ class HandleNode(Node):
 
         if pressed:
             self.set_at_selector(selected_position)
+
+
+    def toggle_at_range(self, selector):
+        """
+        レンジボタンでD/Rへ入り, 同じボタンをもう一度押すとNへ戻す.
+        """
+        if self.at_selector == selector:
+            self.set_at_selector('N')
+            return
+
+        self.set_at_selector(selector)
 
 
     def set_at_selector(self, selector):
